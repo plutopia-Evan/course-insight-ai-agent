@@ -1,0 +1,12 @@
+TOOL1:
+http://127.0.0.1:8000/analysis
+输入：{
+ "file_path":"xxx.xlsx"
+}
+TOOL2:
+http://127.0.0.1:8000/feedback_analysis
+输入:{
+ "feedback_texts":[]
+}
+TOOL3:
+http://127.0.0.1:8000/generate_report
