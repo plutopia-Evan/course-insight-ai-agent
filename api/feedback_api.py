@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from deepseek_feedback_analyzer import (
+from llm.deepseek_feedback_analyzer import (
     deepseek_analyze_feedback
 )
 
@@ -12,11 +12,6 @@ app = FastAPI(
 
 
 class FeedbackRequest(BaseModel):
-
-    course_name:str
-
-    session:str
-
     feedback_texts:list[str]
 
 
@@ -34,20 +29,11 @@ def feedback_analysis(
         result = deepseek_analyze_feedback(
             feedback_id=str(idx + 1),
             feedback_text=text,
-            course_name=request.course_name,
-            session=request.session
         )
 
         results.append(result)
 
     return {
-
-        "course_name":
-            request.course_name,
-
-        "session":
-            request.session,
-
         "feedback_count":
             len(results),
 

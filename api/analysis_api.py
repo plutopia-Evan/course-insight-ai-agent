@@ -1,126 +1,248 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+from datetime import datetime, date
+
+from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import JSONResponse
 
 import os
+import uuid
+import numpy as np
+import pandas as pd
 
-from survey_processor import (
-    load_question_mapping,
-    read_survey_file,
-    wide_to_long,
-    map_questions,
-    detect_anomalies,
-    get_valid_ratings,
-    split_rating_and_text
-)
 
-from statistics import (
-    compute_overview_stats
-)
+from agent.course_pipeline import run_course_analysis
+
 
 
 app = FastAPI(
-    title="Course Survey Analysis Tool"
+    title="Analysis API"
 )
 
 
-class AnalysisRequest(BaseModel):
-    file_path: str
+
+# ===============================
+# numpy / pandas JSON转换
+# ===============================
+
+def convert_numpy(obj):
+
+    import math
 
 
-@app.post("/analysis")
-def analysis(request: AnalysisRequest):
-
-    file_path = request.file_path
+    if isinstance(obj, np.integer):
+        return int(obj)
 
 
-    # 1. 检查文件
-    if not os.path.exists(file_path):
+    elif isinstance(obj, np.floating):
+
+        value = float(obj)
+
+        if math.isnan(value) or math.isinf(value):
+            return None
+
+        return value
+
+
+    elif isinstance(obj, float):
+
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+
+        return obj
+
+
+    elif isinstance(obj, np.ndarray):
+
+        return [
+            convert_numpy(x)
+            for x in obj.tolist()
+        ]
+
+
+    elif isinstance(obj, pd.DataFrame):
+
+        return [
+            convert_numpy(row)
+            for row in obj.to_dict(
+                orient="records"
+            )
+        ]
+
+
+    elif isinstance(obj, pd.Series):
+
+        return [
+            convert_numpy(x)
+            for x in obj.tolist()
+        ]
+
+
+    elif isinstance(obj, pd.Timestamp):
+
+        return obj.isoformat()
+
+
+    elif isinstance(obj, (datetime,date)):
+
+        return obj.isoformat()
+
+
+    elif isinstance(obj, dict):
+
         return {
-            "error": "文件不存在",
-            "file_path": file_path
+            k:convert_numpy(v)
+            for k,v in obj.items()
         }
 
 
-    # 2. 加载题目映射
-    mapping_path = "config/question_mapping.xlsx"
+    elif isinstance(obj,list):
 
-    mapping_df = load_question_mapping(
-        mapping_path
+        return [
+            convert_numpy(x)
+            for x in obj
+        ]
+
+
+    else:
+
+        return obj
+
+
+
+# ===============================
+# 文件上传分析接口
+# ===============================
+
+
+@app.post("/analysis")
+async def analysis(
+        file: UploadFile = File(...)
+):
+
+
+    # ==========================
+    # 1. 保存上传文件
+    # ==========================
+
+    upload_dir = "data/upload"
+
+
+    os.makedirs(
+        upload_dir,
+        exist_ok=True
     )
 
 
-    # 3. 读取问卷
-    course_name, session, df, questions, meta = read_survey_file(
+    filename = file.filename
+
+    file_path = os.path.join(
+        upload_dir,
+        filename
+    )
+
+
+    with open(
+        file_path,
+        "wb"
+    ) as f:
+
+        content = await file.read()
+
+        f.write(content)
+
+
+
+    # ==========================
+    # 2. 调用分析pipeline
+    # ==========================
+
+
+    result = run_course_analysis(
         file_path
     )
 
 
-    # 4. 宽表转长表
-    df_long = wide_to_long(
-        df,
-        questions
-    )
+
+    # ==========================
+    # 3. 返回结果
+    # ==========================
 
 
-    # 5. 题目映射
-    df_long = map_questions(
-        df_long,
-        mapping_df
-    )
+    response = {
 
 
-    # 6. 异常检测
-    anomalies = detect_anomalies(
-        df_long
-    )
+        "course_name":
+            result.get(
+                "course_name",
+                ""
+            ),
 
 
-    # 7. 获取有效评分
-    valid_ratings = get_valid_ratings(
-        df_long
-    )
+        "session":
+            result.get(
+                "session",
+                ""
+            ),
 
 
-    # 8. 文本反馈
-    rating_df, text_df = split_rating_and_text(
-        df_long
-    )
+        "student_count":
+            result.get(
+                "student_count",
+                0
+            ),
 
-
-    # 9. 计算基础指标
-
-    student_count = (
-        df_long[
-            ["学员编号",
-             "course_name",
-             "session"]
-        ]
-        .drop_duplicates()
-        .shape[0]
-    )
-
-
-    result = {
-
-        "course_name": course_name,
-
-        "session": session,
-
-        "student_count": student_count,
 
         "rating_total":
-            len(rating_df),
+            result.get(
+                "rating_total",
+                0
+            ),
+
 
         "valid_rating_count":
-            len(valid_ratings),
+            result.get(
+                "valid_rating_count",
+                0
+            ),
+
 
         "feedback_count":
-            len(text_df),
+            result.get(
+                "feedback_count",
+                0
+            ),
+
 
         "anomaly_count":
-            len(anomalies)
+            result.get(
+                "anomaly_count",
+                0
+            ),
+
+
+        "normalized_long":
+            result.get(
+                "df_long",
+                []
+            ),
+
+
+        "anomalies":
+            result.get(
+                "anomalies",
+                []
+            ),
+
+
+        "feedback_results":
+            result.get(
+                "feedback_results",
+                []
+            )
 
     }
 
 
-    return result
+
+    return JSONResponse(
+        content=convert_numpy(response)
+    )

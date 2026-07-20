@@ -35,6 +35,7 @@ env/
 data/input/
 data/output/
 data/cache/
+data/upload/
 
 *.tmp
 *.log

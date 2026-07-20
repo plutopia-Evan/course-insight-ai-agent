@@ -9,7 +9,7 @@
 """
 
 
-from survey_processor import (
+from core.survey_processor import (
     read_survey_file,
     load_question_mapping,
     wide_to_long,
@@ -20,13 +20,13 @@ from survey_processor import (
 )
 
 
-from statistics import (
+from core.statistics import (
     compute_overview_stats,
     compute_session_stats
 )
 
 
-from ai_feedback_analyzer import (
+from llm.ai_feedback_analyzer import (
     mock_analyze_feedback
 )
 
@@ -123,19 +123,62 @@ def run_course_analysis(file_path):
 
         feedback_results.append(result)
 
-
     return {
 
-        "course_name":course_name,
+        # 基础信息
 
-        "session":session,
+        "course_name":
+            course_name,
 
-        "valid_rating":valid_rating,
+        "session":
+            session,
 
-        "anomalies":anomalies,
+        # 统计信息
 
-        "feedback_results":feedback_results,
+        "student_count":
+            int(
+                df_long["学员编号"]
+                .nunique()
+            ),
 
-        "df_long":df_long
+        "rating_total":
+            int(
+                len(
+                    df_long[
+                        df_long["question_type"]
+                        ==
+                        "rating"
+                        ]
+                )
+            ),
+
+        "valid_rating_count":
+            int(
+                len(valid_rating)
+            ),
+
+        "feedback_count":
+            int(
+                len(text_df)
+            ),
+
+        "anomaly_count":
+            int(
+                len(anomalies)
+            ),
+
+        # 原始数据
+
+        "valid_rating":
+            valid_rating,
+
+        "anomalies":
+            anomalies,
+
+        "feedback_results":
+            feedback_results,
+
+        "df_long":
+            df_long
 
     }

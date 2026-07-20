@@ -1,11 +1,11 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import FileResponse
 
 import os
 import pandas as pd
 
 from agent.course_pipeline import run_course_analysis
-from output_writer import write_output_excel
+from core.output_writer import write_output_excel
 
 
 app = FastAPI(
@@ -13,96 +13,233 @@ app = FastAPI(
 )
 
 
-class ReportRequest(BaseModel):
 
-    file_path: str
-
-
+# ==========================
+# 生成报告接口
+# ==========================
 
 @app.post("/generate_report")
-def generate_report(
-        request: ReportRequest
+async def generate_report(
+        file: UploadFile = File(...)
 ):
 
     # ==========================
-    # 1. 调用分析Pipeline
+    # 1. 保存上传文件
     # ==========================
 
-    result = run_course_analysis(
-        request.file_path
-    )
-
-
-    course_name = result["course_name"]
-
-    session = result["session"]
-
-
-
-    # ==========================
-    # 2. 输出路径
-    # ==========================
-
-    output_path = (
-        "data/output/"
-        f"{course_name}_{session}_分析报告.xlsx"
-    )
+    upload_dir = "data/upload"
 
 
     os.makedirs(
-        "data/output",
+        upload_dir,
         exist_ok=True
     )
 
 
+    filename = file.filename
+
+
+    file_path = os.path.join(
+        upload_dir,
+        filename
+    )
+
+
+    with open(
+        file_path,
+        "wb"
+    ) as f:
+
+        content = await file.read()
+
+        f.write(content)
+
+
 
     # ==========================
-    # 3. 构造Excel数据
+    # 2. 调用分析Pipeline
+    # ==========================
+
+    result = run_course_analysis(
+        file_path
+    )
+
+
+
+    course_name = result.get(
+        "course_name",
+        ""
+    )
+
+
+    session = result.get(
+        "session",
+        ""
+    )
+
+
+
+    # ==========================
+    # 3. 输出路径
+    # ==========================
+
+    output_dir = "data/output"
+
+
+    os.makedirs(
+        output_dir,
+        exist_ok=True
+    )
+
+
+    output_path = (
+        f"{output_dir}/"
+        f"{course_name}_{session}_分析报告.xlsx"
+    )
+
+
+
+    # ==========================
+    # 4. 构造Excel数据
     # ==========================
 
     data = {}
 
 
 
-    # 课程概览
+    # --------------------------
+    # 数据总览
+    # --------------------------
 
     data["overview"] = pd.DataFrame(
         [
             {
+
                 "课程名称":
                     course_name,
+
 
                 "期次":
                     session,
 
-                "异常数量":
-                    len(
-                        result["anomalies"]
+
+                "student_count":
+                    result.get(
+                        "student_count",
+                        0
                     ),
 
-                "反馈数量":
-                    len(
-                        result["feedback_results"]
+
+                "rating_total":
+                    result.get(
+                        "rating_total",
+                        0
+                    ),
+
+
+                "valid_rating_count":
+                    result.get(
+                        "valid_rating_count",
+                        0
+                    ),
+
+
+                "feedback_count":
+                    result.get(
+                        "feedback_count",
+                        0
+                    ),
+
+
+                "anomaly_count":
+                    result.get(
+                        "anomaly_count",
+                        0
                     )
+
             }
         ]
     )
 
 
 
-    # ==========================
-    # 反馈分析结果
-    # ==========================
+    # --------------------------
+    # AI反馈分析
+    # --------------------------
+
+    # --------------------------
+    # AI反馈分析
+    # --------------------------
 
     feedback_rows = []
 
-
-    for item in result["feedback_results"]:
-
-        for feedback in item.get(
-            "items",
+    for item in result.get(
+            "feedback_results",
             []
-        ):
+    ):
+
+        # 情况1：
+        # 存在items，多分类反馈
+
+        if "items" in item:
+
+            for feedback in item.get(
+                    "items",
+                    []
+            ):
+                feedback_rows.append(
+                    {
+
+                        "feedback_id":
+                            item.get(
+                                "feedback_id",
+                                ""
+                            ),
+
+                        "course_name":
+                            course_name,
+
+                        "session":
+                            session,
+
+                        "category":
+                            feedback.get(
+                                "category",
+                                ""
+                            ),
+
+                        "subcategory":
+                            feedback.get(
+                                "subcategory",
+                                ""
+                            ),
+
+                        "sentiment":
+                            feedback.get(
+                                "sentiment",
+                                ""
+                            ),
+
+                        "summary":
+                            feedback.get(
+                                "summary",
+                                ""
+                            ),
+
+                        "evidence":
+                            feedback.get(
+                                "evidence",
+                                ""
+                            )
+
+                    }
+                )
+
+
+        # 情况2：
+        # 单条反馈直接返回
+
+        else:
 
             feedback_rows.append(
                 {
@@ -114,43 +251,37 @@ def generate_report(
                         ),
 
                     "course_name":
-                        item.get(
-                            "course_name",
-                            course_name
-                        ),
+                        course_name,
 
                     "session":
-                        item.get(
-                            "session",
-                            session
-                        ),
+                        session,
 
                     "category":
-                        feedback.get(
+                        item.get(
                             "category",
                             ""
                         ),
 
                     "subcategory":
-                        feedback.get(
+                        item.get(
                             "subcategory",
                             ""
                         ),
 
                     "sentiment":
-                        feedback.get(
+                        item.get(
                             "sentiment",
                             ""
                         ),
 
                     "summary":
-                        feedback.get(
+                        item.get(
                             "summary",
                             ""
                         ),
 
                     "evidence":
-                        feedback.get(
+                        item.get(
                             "evidence",
                             ""
                         )
@@ -158,35 +289,52 @@ def generate_report(
                 }
             )
 
-
     data["feedback_detail"] = pd.DataFrame(
         feedback_rows
     )
 
 
+    # --------------------------
+    # 标准化长表
+    # --------------------------
 
-    # ==========================
-    # 原始长表
-    # ==========================
-
-    data["normalized_long"] = (
-        result["df_long"]
+    df_long = result.get(
+        "df_long",
+        pd.DataFrame()
     )
 
 
+    if isinstance(
+        df_long,
+        pd.DataFrame
+    ):
 
-    # ==========================
+        data["normalized_long"] = df_long
+
+    else:
+
+        data["normalized_long"] = pd.DataFrame()
+
+
+
+    # --------------------------
     # 异常数据
-    # ==========================
+    # --------------------------
+
+    anomalies = result.get(
+        "anomalies",
+        []
+    )
+
 
     data["anomalies"] = pd.DataFrame(
-        result["anomalies"]
+        anomalies
     )
 
 
 
     # ==========================
-    # 补充Excel Sheet
+    # 5. 补齐Excel Sheet
     # ==========================
 
     empty_sheets = [
@@ -216,14 +364,12 @@ def generate_report(
 
     for sheet in empty_sheets:
 
-        if sheet not in data:
-
-            data[sheet] = pd.DataFrame()
+        data[sheet] = pd.DataFrame()
 
 
 
     # ==========================
-    # 写入Excel
+    # 6. 写入Excel
     # ==========================
 
     write_output_excel(
@@ -232,6 +378,10 @@ def generate_report(
     )
 
 
+
+    # ==========================
+    # 7. 返回结果
+    # ==========================
 
     return {
 
@@ -244,7 +394,27 @@ def generate_report(
         "session":
             session,
 
-        "file_path":
-            output_path
+        "download_url":
+            f"/download/{os.path.basename(output_path)}"
 
     }
+
+# ==========================
+# 文件下载接口
+# ==========================
+
+@app.get("/download/{filename}")
+def download_file(
+        filename: str
+):
+
+    file_path = os.path.join(
+        "data/output",
+        filename
+    )
+
+
+    return FileResponse(
+        path=file_path,
+        filename=filename
+    )
