@@ -1,6 +1,6 @@
 from datetime import datetime, date
 
-from fastapi import FastAPI, UploadFile, File
+from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import JSONResponse
 
 import os
@@ -13,10 +13,9 @@ from agent.course_pipeline import run_course_analysis
 
 
 
-app = FastAPI(
-    title="Analysis API"
+router = APIRouter(
+    tags=["analysis"]
 )
-
 
 
 # ===============================
@@ -113,7 +112,7 @@ def convert_numpy(obj):
 # ===============================
 
 
-@app.post("/analysis")
+@router.post("/analysis")
 async def analysis(
         file: UploadFile = File(...)
 ):

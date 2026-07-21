@@ -1,8 +1,8 @@
 from fastapi import FastAPI
 
-from api.analysis_api import app as analysis_app
-from api.feedback_api import app as feedback_app
-from api.report_api import app as report_app
+from api.analysis_api import router as analysis_router
+from api.feedback_api import router as feedback_router
+from api.report_api import router as report_router
 
 
 app = FastAPI(
@@ -19,15 +19,16 @@ def root():
     }
 
 
-# 注册三个接口
-
-for route in analysis_app.routes:
-    app.router.routes.append(route)
-
-
-for route in feedback_app.routes:
-    app.router.routes.append(route)
+app.include_router(
+    analysis_router
+)
 
 
-for route in report_app.routes:
-    app.router.routes.append(route)
+app.include_router(
+    feedback_router
+)
+
+
+app.include_router(
+    report_router
+)

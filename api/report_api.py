@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import FileResponse
 
 import os
@@ -8,17 +8,15 @@ from agent.course_pipeline import run_course_analysis
 from core.output_writer import write_output_excel
 
 
-app = FastAPI(
-    title="Report Generation Tool"
+router = APIRouter(
+    tags=["report"]
 )
-
-
 
 # ==========================
 # 生成报告接口
 # ==========================
 
-@app.post("/generate_report")
+@router.post("/generate_report")
 async def generate_report(
         file: UploadFile = File(...)
 ):
@@ -403,7 +401,7 @@ async def generate_report(
 # 文件下载接口
 # ==========================
 
-@app.get("/download/{filename}")
+@router.get("/download/{filename}")
 def download_file(
         filename: str
 ):

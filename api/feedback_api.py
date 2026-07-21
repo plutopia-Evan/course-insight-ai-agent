@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import APIRouter
 from pydantic import BaseModel
 
 from llm.deepseek_feedback_analyzer import (
@@ -6,16 +6,15 @@ from llm.deepseek_feedback_analyzer import (
 )
 
 
-app = FastAPI(
-    title="Feedback Analysis Tool"
+router = APIRouter(
+    tags=["feedback"]
 )
-
 
 class FeedbackRequest(BaseModel):
     feedback_texts:list[str]
 
 
-@app.post("/feedback_analysis")
+@router.post("/feedback_analysis")
 def feedback_analysis(
         request:FeedbackRequest
 ):
