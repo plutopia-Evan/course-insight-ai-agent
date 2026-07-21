@@ -9,8 +9,7 @@ import numpy as np
 import pandas as pd
 
 
-from agent.course_pipeline import run_course_analysis
-
+from agent.orchestrator import CourseInsightAgent
 
 
 router = APIRouter(
@@ -154,8 +153,9 @@ async def analysis(
     # 2. 调用分析pipeline
     # ==========================
 
+    agent = CourseInsightAgent()
 
-    result = run_course_analysis(
+    result = agent.run(
         file_path
     )
 
