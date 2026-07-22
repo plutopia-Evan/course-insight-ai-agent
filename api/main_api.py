@@ -9,6 +9,12 @@ app = FastAPI(
     title="Course Insight AI Agent API"
 )
 
+from api.dify_api import router as dify_router
+
+
+app.include_router(
+    dify_router
+)
 
 @app.get("/")
 def root():
