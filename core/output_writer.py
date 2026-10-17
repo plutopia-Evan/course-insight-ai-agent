@@ -102,7 +102,7 @@ def _write_df_to_sheet(ws, df: pd.DataFrame, start_row: int = 1, apply_style: bo
         _auto_width(ws)
 
 
-def write_output_excel(output_path: str, data: Dict):
+def write_output_excel(output_path: str, data: Dict, include_empty_sheets: bool = True):
     """生成最终的 course_survey_analysis.xlsx 文件。
 
     Args:
@@ -140,11 +140,14 @@ def write_output_excel(output_path: str, data: Dict):
         ("开放式反馈", "feedback_summary"),
         ("反馈频次汇总", "feedback_frequency"),
         ("开放式反馈明细", "feedback_detail"),
+        ("AI分析错误", "feedback_errors"),
         ("异常数据", "anomalies"),
         ("人工待确认", "pending_review"),
     ]
 
     for sheet_name, data_key in sheet_configs:
+        if not include_empty_sheets and data_key not in data:
+            continue
         logger.debug("写入工作表: %s", sheet_name)
         ws = wb.create_sheet(title=sheet_name)
         df = data.get(data_key)

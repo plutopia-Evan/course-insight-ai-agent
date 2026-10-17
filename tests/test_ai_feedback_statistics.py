@@ -74,15 +74,15 @@ def main():
             sheet_rows[sheet] = len(df)
             print(f"  {sheet}: {len(df)} 行")
 
-    # 检查 4: 反馈人数 <= 有效反馈总人数
-    print("\n--- 检查 4: 反馈人数 <= 有效反馈总人数 ---")
+    # 检查 4: 反馈人数 <= 已分类反馈人数
+    print("\n--- 检查 4: 反馈人数 <= 已分类反馈人数 ---")
     if "AI标签统计" in xlsx.sheet_names:
         df = pd.read_excel(xlsx, "AI标签统计")
         violations = 0
         for _, row in df.iterrows():
-            if row["反馈人数"] > row["有效反馈总人数"]:
+            if row["反馈人数"] > row["已分类反馈人数"]:
                 print(f"  [FAIL] {row['课程名称']} {row['期次']} {row['subcategory']}: "
-                      f"反馈人数={row['反馈人数']} > 总人数={row['有效反馈总人数']}")
+                      f"反馈人数={row['反馈人数']} > 总人数={row['已分类反馈人数']}")
                 violations += 1
         if violations == 0:
             print(f"  [OK] 全部通过 ({len(df)} 行)")

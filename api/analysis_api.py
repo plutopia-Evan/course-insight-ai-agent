@@ -168,6 +168,22 @@ async def analysis(
 
     response = {
 
+        "status": result["analysis_status"],
+
+        "feedback_analyzed_count": result["feedback_analyzed_count"],
+
+        "feedback_failed_count": result["feedback_failed_count"],
+
+        "feedback_skipped_count": result["feedback_skipped_count"],
+
+        "feedback_response_count": result["feedback_response_count"],
+
+        "feedback_item_count": result["feedback_item_count"],
+
+        "feedback_errors": result["feedback_errors"],
+
+        "download_url": f"/download/{os.path.basename(result['report_path'])}",
+
 
         "course_name":
             result.get(

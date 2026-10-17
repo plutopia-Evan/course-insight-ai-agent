@@ -63,30 +63,7 @@ async def dify_analyze(
     # 3. 处理overview
     # =====================
 
-    overview = result.get(
-        "overview",
-        {}
-    )
-
-
-    # 如果是DataFrame
-
-    if hasattr(
-        overview,
-        "to_dict"
-    ):
-
-        if len(overview) > 0:
-
-            overview = (
-                overview
-                .iloc[0]
-                .to_dict()
-            )
-
-        else:
-
-            overview = {}
+    overview = result["summary"]
 
 
 
@@ -97,7 +74,17 @@ async def dify_analyze(
     return {
 
 
-        "success": True,
+        "success": summary["analysis_status"] == "complete",
+
+        "status": summary["analysis_status"],
+
+        "feedback_failed_count": summary["feedback_failed_count"],
+
+        "feedback_response_count": summary["feedback_response_count"],
+
+        "feedback_item_count": summary["feedback_item_count"],
+
+        "feedback_errors": result["feedback_errors"],
 
 
         "course_name":
@@ -143,12 +130,7 @@ async def dify_analyze(
 
 
         "anomaly_count":
-            len(
-                result.get(
-                    "anomalies",
-                    []
-                )
-            ),
+            overview["anomaly_count"],
 
 
         "report_path":

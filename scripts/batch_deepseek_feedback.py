@@ -24,9 +24,9 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from deepseek_feedback_analyzer import deepseek_analyze_feedback
+from llm.deepseek_feedback_analyzer import deepseek_analyze_feedback
 
 
 # ---------------------------------------------------------------------------

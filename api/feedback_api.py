@@ -32,9 +32,21 @@ def feedback_analysis(
 
         results.append(result)
 
+    errors = [
+        {"feedback_id": result["feedback_id"], "error": result["_error"]}
+        for result in results if result.get("_error")
+    ]
     return {
-        "feedback_count":
-            len(results),
+        "status": "partial" if errors else "complete",
+        "feedback_response_count": len(results),
+
+        "feedback_item_count": sum(len(result.get("items", [])) for result in results),
+
+        "feedback_count": sum(len(result.get("items", [])) for result in results),
+
+        "feedback_failed_count": len(errors),
+
+        "feedback_errors": errors,
 
         "analysis":
             results

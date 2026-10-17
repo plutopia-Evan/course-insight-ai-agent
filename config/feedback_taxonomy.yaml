@@ -6,6 +6,40 @@ sentiments:
   - suggestion
   - neutral
 
+# 明确正向和请求类标签；其余问题类标签允许 negative 或 suggestion。
+# “其他问题”额外允许 neutral，用于无法进一步归类的中性陈述。
+positive_subcategories:
+  - 内容实用
+  - 内容丰富
+  - 讲解清晰
+  - 专业度高
+  - 答疑充分
+  - 互动充分
+  - 节奏合理
+  - 难度适中
+  - 案例实用
+  - 练习充分
+  - 资料完整
+  - 资料发放及时
+  - 平台运行正常
+  - 服务及时
+  - 通知及时
+  - 答疑安排充分
+  - 上课时间合理
+  - 其他正向评价
+
+suggestion_subcategories:
+  - 希望增加相关内容
+  - 希望增加真实案例
+  - 希望增加完整案例
+  - 希望增加课堂练习
+  - 希望增加课后资料
+  - 希望提供参考答案
+  - 其他建议
+
+neutral_allowed_subcategories:
+  - 其他问题
+
 categories:
   课程内容:
     - 内容实用

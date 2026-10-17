@@ -648,7 +648,10 @@ def _run_ai_analysis():
             st.warning(f"合并Excel时出错: {e}，基础报告仍可下载")
 
         progress_bar.progress(1.0)
-        status_placeholder.text("AI分析完成！")
+        if ai_results.get("errors") is not None and not ai_results["errors"].empty:
+            status_placeholder.text("AI分析结束，存在未完成项目，请查看 AI 错误记录")
+        else:
+            status_placeholder.text("AI分析完成！")
         progress_placeholder.empty()
 
     except Exception as e:
@@ -806,12 +809,12 @@ def _render_trend_tab(ai_results):
                 val = row.get("持续问题", "")
                 st.write(val if pd.notna(val) and str(val).strip() else "无")
             with col2:
-                st.markdown("#### 新出现问题")
-                val = row.get("新出现问题", "")
+                st.markdown("#### 仅本期观察到的问题")
+                val = row.get("仅本期观察到的问题", "")
                 st.write(val if pd.notna(val) and str(val).strip() else "无")
             with col3:
-                st.markdown("#### 已改善问题")
-                val = row.get("已改善问题", "")
+                st.markdown("#### 本期未观察到的问题")
+                val = row.get("本期未观察到的问题", "")
                 st.write(val if pd.notna(val) and str(val).strip() else "无")
 
             st.markdown("#### 下一期优先事项")
