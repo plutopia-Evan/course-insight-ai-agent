@@ -6,6 +6,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from agent.orchestrator import CourseInsightAgent
+from api.upload_storage import saved_upload
 
 
 router = APIRouter(tags=["report"])
@@ -13,13 +14,8 @@ router = APIRouter(tags=["report"])
 
 @router.post("/generate_report")
 async def generate_report(file: UploadFile = File(...)):
-    upload_dir = Path("data/upload")
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    file_path = upload_dir / Path(file.filename or "survey.xlsx").name
-    with file_path.open("wb") as output:
-        output.write(await file.read())
-
-    result = CourseInsightAgent().run(str(file_path))
+    async with saved_upload(file) as file_path:
+        result = CourseInsightAgent().run(str(file_path))
     return {
         "status": result["analysis_status"],
         "course_name": result["course_name"],

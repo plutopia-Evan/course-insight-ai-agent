@@ -1,8 +1,7 @@
 from fastapi import APIRouter, UploadFile, File
-import shutil
-import os
 
 from agent.orchestrator import CourseInsightAgent
+from api.upload_storage import saved_upload
 
 
 router = APIRouter()
@@ -19,43 +18,8 @@ async def dify_analyze(
     # 1. 保存上传文件
     # =====================
 
-    upload_dir = "data/upload"
-
-
-    os.makedirs(
-        upload_dir,
-        exist_ok=True
-    )
-
-
-    file_path = (
-        f"{upload_dir}/"
-        f"{file.filename}"
-    )
-
-
-    with open(
-        file_path,
-        "wb"
-    ) as buffer:
-
-        shutil.copyfileobj(
-            file.file,
-            buffer
-        )
-
-
-
-    # =====================
-    # 2. 调用Agent
-    # =====================
-
-    agent = CourseInsightAgent()
-
-
-    result = agent.run(
-        file_path
-    )
+    async with saved_upload(file) as file_path:
+        result = CourseInsightAgent().run(str(file_path))
 
 
 
@@ -74,15 +38,15 @@ async def dify_analyze(
     return {
 
 
-        "success": summary["analysis_status"] == "complete",
+        "success": overview["analysis_status"] == "complete",
 
-        "status": summary["analysis_status"],
+        "status": overview["analysis_status"],
 
-        "feedback_failed_count": summary["feedback_failed_count"],
+        "feedback_failed_count": overview["feedback_failed_count"],
 
-        "feedback_response_count": summary["feedback_response_count"],
+        "feedback_response_count": overview["feedback_response_count"],
 
-        "feedback_item_count": summary["feedback_item_count"],
+        "feedback_item_count": overview["feedback_item_count"],
 
         "feedback_errors": result["feedback_errors"],
 

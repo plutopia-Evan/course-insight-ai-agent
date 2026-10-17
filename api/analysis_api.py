@@ -4,12 +4,12 @@ from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import JSONResponse
 
 import os
-import uuid
 import numpy as np
 import pandas as pd
 
 
 from agent.orchestrator import CourseInsightAgent
+from api.upload_storage import saved_upload
 
 
 router = APIRouter(
@@ -121,43 +121,8 @@ async def analysis(
     # 1. 保存上传文件
     # ==========================
 
-    upload_dir = "data/upload"
-
-
-    os.makedirs(
-        upload_dir,
-        exist_ok=True
-    )
-
-
-    filename = file.filename
-
-    file_path = os.path.join(
-        upload_dir,
-        filename
-    )
-
-
-    with open(
-        file_path,
-        "wb"
-    ) as f:
-
-        content = await file.read()
-
-        f.write(content)
-
-
-
-    # ==========================
-    # 2. 调用分析pipeline
-    # ==========================
-
-    agent = CourseInsightAgent()
-
-    result = agent.run(
-        file_path
-    )
+    async with saved_upload(file) as file_path:
+        result = CourseInsightAgent().run(str(file_path))
 
 
 

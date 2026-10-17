@@ -10,30 +10,39 @@
 
 ## 环境要求
 
-- Python 3.11+
+- Python 3.10+
 - pandas
 - openpyxl
 - numpy
-- streamlit
+- Streamlit（仅网页界面需要，见 `requirements-ui.txt`）
 
 ## 安装
 
+在本项目根目录安装 API 与命令行依赖：
+
 ```cmd
-cd D:\course-survey-tool
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+```
+
+需要运行 Streamlit 网页界面时安装：
+
+```cmd
+python -m pip install -r requirements-ui.txt
 ```
 
 ## 目录结构
 
 ```
-course-survey-tool/
+course-insight-ai-agent/
 ├── app.py                     # Streamlit 网页界面入口
 ├── main.py                    # 命令行主入口
-├── survey_processor.py        # 数据读取、宽转长、题目映射、异常检测
-├── statistics.py              # 评分统计计算
-├── text_cleaner.py            # 文本反馈清洗
-├── output_writer.py           # Excel 输出生成
+├── core/                      # 数据读取、清洗、评分统计和 Excel 输出
+├── api/                       # FastAPI 接口
+├── agent/                     # 单文件分析流程
+├── llm/                       # 模型调用与校验
+├── scripts/                   # 批量 AI 分析流程
 ├── requirements.txt
+├── requirements-ui.txt
 ├── README.md
 ├── config/
 │   └── question_mapping.xlsx  # 题目映射配置
@@ -80,19 +89,27 @@ category 说明：
 
 ## 运行
 
+### FastAPI 与部署
+
+本地启动 API：
+
+```cmd
+python -m uvicorn api.main_api:app --host 0.0.0.0 --port 8000
+```
+
+`render.yaml` 配置的是 FastAPI 服务，`Dockerfile` 也启动同一个 API；两者都不会自动启动 Streamlit 界面。部署时在服务环境变量中设置 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL`。生成的报告保存在服务本地的 `data/output/`，下载链接依赖该文件仍在当前服务实例上；若需要跨实例或长期保存报告，后续应接入持久化存储。
+
 ### 方式一：网页界面（推荐）
 
 通过浏览器上传文件、在线查看结果、下载分析报告：
 
 ```cmd
-cd D:\course-survey-tool
 streamlit run app.py
 ```
 
 如果 `streamlit` 命令未加入 PATH，可使用：
 
 ```cmd
-cd D:\course-survey-tool
 python -m streamlit run app.py
 ```
 
@@ -115,7 +132,6 @@ python -m streamlit run app.py
 批处理 `data/input/` 目录下的所有问卷文件：
 
 ```cmd
-cd D:\course-survey-tool
 python main.py
 ```
 
