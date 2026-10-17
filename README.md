@@ -10,7 +10,7 @@
 
 ## 环境要求
 
-- Python 3.10+
+- Python 3.13（部署环境；已有的 Python 3.10 本地环境也可运行，但不再接收安全更新）
 - pandas
 - openpyxl
 - numpy
