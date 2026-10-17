@@ -1,11 +1,12 @@
 """Upload paths stay isolated and the Dify response uses the analysis summary."""
 
+import json
 from io import BytesIO
 
 import pytest
 from fastapi import HTTPException, UploadFile
 
-from api import dify_api
+from api import analysis_api, analysis_runner, dify_api, report_api
 from api.upload_storage import saved_upload
 
 
@@ -78,6 +79,7 @@ def test_upload_rejects_unsafe_filename(monkeypatch, tmp_path, filename):
 def test_dify_endpoint_returns_summary_without_name_error(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     uploaded_paths = []
+    threadpool_calls = []
 
     class FakeAgent:
         def run(self, file_path):
@@ -104,7 +106,12 @@ def test_dify_endpoint_returns_summary_without_name_error(monkeypatch, tmp_path)
                 "report_path": "data/output/report.xlsx",
             }
 
-    monkeypatch.setattr(dify_api, "CourseInsightAgent", FakeAgent)
+    async def fake_threadpool(function, *args):
+        threadpool_calls.append((function, args))
+        return function(*args)
+
+    monkeypatch.setattr(analysis_runner, "CourseInsightAgent", FakeAgent)
+    monkeypatch.setattr(analysis_runner, "run_in_threadpool", fake_threadpool)
     upload = MemoryUpload(file=BytesIO(b"survey"), filename="课程_第01期.xlsx")
     result = run_in_memory_upload(dify_api.dify_analyze(upload))
 
@@ -112,4 +119,43 @@ def test_dify_endpoint_returns_summary_without_name_error(monkeypatch, tmp_path)
     assert result["success"] is False
     assert result["feedback_failed_count"] == 1
     assert result["feedback_item_count"] == 3
+    assert len(threadpool_calls) == 1
     assert not uploaded_paths[0].exists()
+
+
+def test_analysis_and_report_endpoints_use_shared_runner(monkeypatch):
+    calls = []
+    summary = {
+        "analysis_status": "complete",
+        "feedback_analyzed_count": 1,
+        "feedback_failed_count": 0,
+        "feedback_skipped_count": 0,
+        "feedback_response_count": 1,
+        "feedback_item_count": 1,
+        "feedback_count": 1,
+        "anomaly_count": 0,
+    }
+    result = {
+        **summary,
+        "summary": summary,
+        "course_name": "课程",
+        "session": "第01期",
+        "feedback_errors": [],
+        "feedback_results": [],
+        "report_path": "data/output/report.xlsx",
+    }
+
+    async def fake_runner(file):
+        calls.append(file.filename)
+        return result
+
+    monkeypatch.setattr(analysis_api, "analyze_upload", fake_runner)
+    monkeypatch.setattr(report_api, "analyze_upload", fake_runner)
+    upload = MemoryUpload(file=BytesIO(b"survey"), filename="survey.xlsx")
+
+    analysis_response = run_in_memory_upload(analysis_api.analysis(upload))
+    report_response = run_in_memory_upload(report_api.generate_report(upload))
+
+    assert calls == ["survey.xlsx", "survey.xlsx"]
+    assert json.loads(analysis_response.body)["download_url"] == "/download/report.xlsx"
+    assert report_response["download_url"] == "/download/report.xlsx"

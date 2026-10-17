@@ -1,7 +1,6 @@
 from fastapi import APIRouter, UploadFile, File
 
-from agent.orchestrator import CourseInsightAgent
-from api.upload_storage import saved_upload
+from api.analysis_runner import analyze_upload
 
 
 router = APIRouter()
@@ -18,8 +17,7 @@ async def dify_analyze(
     # 1. 保存上传文件
     # =====================
 
-    async with saved_upload(file) as file_path:
-        result = CourseInsightAgent().run(str(file_path))
+    result = await analyze_upload(file)
 
 
 
