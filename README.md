@@ -99,6 +99,8 @@ python -m uvicorn api.main_api:app --host 0.0.0.0 --port 8000
 
 `render.yaml` 配置的是 FastAPI 服务，`Dockerfile` 也启动同一个 API；两者都不会自动启动 Streamlit 界面。部署时在服务环境变量中设置 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL`。每次分析生成独立的报告文件，避免同一课程、期次重复分析时覆盖旧报告。报告默认保存在服务本地的 `data/output/`；若部署环境提供持久化目录，可通过 `REPORT_OUTPUT_DIR` 指向该目录。下载链接仍依赖处理请求的服务实例能访问该文件；多实例共享报告需要后续接入共享存储。
 
+GitHub Actions 会在 PR 上运行无密钥的自动测试。本地构建 Docker 镜像时，`.dockerignore` 会排除 `.env` 和运行数据；线上密钥应通过部署环境变量提供。
+
 ### 方式一：网页界面（推荐）
 
 通过浏览器上传文件、在线查看结果、下载分析报告：

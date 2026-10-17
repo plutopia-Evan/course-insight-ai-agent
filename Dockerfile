@@ -13,7 +13,6 @@ COPY requirements.txt .
 # 安装Python依赖
 RUN pip install \
     --no-cache-dir \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple \
     -r requirements.txt
 
 
@@ -25,6 +24,5 @@ COPY . .
 EXPOSE 8000
 
 
-# 启动FastAPI
 # 启动FastAPI
 CMD ["uvicorn", "api.main_api:app", "--host", "0.0.0.0", "--port", "8000"]
