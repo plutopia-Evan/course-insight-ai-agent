@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 
 from agent.orchestrator import CourseInsightAgent
 from api.upload_storage import saved_upload
+from core.report_storage import report_directory
 
 
 router = APIRouter(tags=["report"])
@@ -28,7 +29,10 @@ async def generate_report(file: UploadFile = File(...)):
 
 @router.get("/download/{filename}")
 def download_file(filename: str):
-    file_path = Path("data/output") / filename
+    if (filename != Path(filename).name or any(char in filename for char in "/\\:\x00")
+            or Path(filename).suffix.lower() != ".xlsx"):
+        raise HTTPException(status_code=404, detail="Report not found")
+    file_path = report_directory() / filename
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="Report not found")
     return FileResponse(path=file_path, filename=filename)

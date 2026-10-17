@@ -97,7 +97,7 @@ category 说明：
 python -m uvicorn api.main_api:app --host 0.0.0.0 --port 8000
 ```
 
-`render.yaml` 配置的是 FastAPI 服务，`Dockerfile` 也启动同一个 API；两者都不会自动启动 Streamlit 界面。部署时在服务环境变量中设置 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL`。生成的报告保存在服务本地的 `data/output/`，下载链接依赖该文件仍在当前服务实例上；若需要跨实例或长期保存报告，后续应接入持久化存储。
+`render.yaml` 配置的是 FastAPI 服务，`Dockerfile` 也启动同一个 API；两者都不会自动启动 Streamlit 界面。部署时在服务环境变量中设置 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL`。每次分析生成独立的报告文件，避免同一课程、期次重复分析时覆盖旧报告。报告默认保存在服务本地的 `data/output/`；若部署环境提供持久化目录，可通过 `REPORT_OUTPUT_DIR` 指向该目录。下载链接仍依赖处理请求的服务实例能访问该文件；多实例共享报告需要后续接入共享存储。
 
 ### 方式一：网页界面（推荐）
 

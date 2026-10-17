@@ -1,10 +1,9 @@
 """Create the Excel report from the same data returned by the API."""
 
-from pathlib import Path
-
 import pandas as pd
 
 from core.output_writer import write_output_excel
+from core.report_storage import new_report_path
 
 
 FEEDBACK_COLUMNS = [
@@ -15,11 +14,7 @@ FEEDBACK_COLUMNS = [
 
 class ReportAgent:
     def run(self, context):
-        output_dir = Path("data/output")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / (
-            f"{context['course_name']}_{context['session']}_分析报告.xlsx"
-        )
+        output_path = new_report_path(context["course_name"], context["session"])
 
         overview = {
             "课程名称": context["course_name"],
