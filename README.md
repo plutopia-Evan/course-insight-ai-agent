@@ -186,4 +186,4 @@ python main.py
 
 ### 自动测试
 
-在项目根目录运行 `python -m pytest -q`。`tests/conftest.py` 将需要真实服务、密钥或手工数据文件的旧脚本排除在自动测试收集之外；这些脚本仍保留在 `tests/` 中供手工检查。
+在项目根目录运行 `python -m pytest -q`。其中 `tests/test_end_to_end_api.py` 会生成脱敏问卷，使用模拟反馈分类器核对三个 API 返回值、报告内容和下载路径，不需要模型密钥。`tests/conftest.py` 将需要真实服务、密钥或手工数据文件的旧脚本排除在自动测试收集之外；这些脚本仍保留在 `tests/` 中供手工检查。真实 DeepSeek 调用及线上 HTTP 部署仍需在配置好密钥和部署环境后单独验收。
