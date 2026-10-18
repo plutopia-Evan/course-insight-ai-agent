@@ -25,7 +25,20 @@ async def generate_report(file: UploadFile = File(...)):
     }
 
 
-@router.get("/download/{filename}")
+@router.get(
+    "/download/{filename}",
+    response_class=FileResponse,
+    responses={
+        200: {
+            "description": "Excel report",
+            "content": {
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            },
+        }
+    },
+)
 def download_file(filename: str):
     if (filename != Path(filename).name or any(char in filename for char in "/\\:\x00")
             or Path(filename).suffix.lower() != ".xlsx"):
