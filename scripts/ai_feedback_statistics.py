@@ -99,8 +99,7 @@ def generate_statistics(
     print(f"数据校验: 正常 {len(df_clean)} 条, 异常 {len(df_anomalies)} 条")
 
     if len(df_clean) == 0:
-        print("错误: 无有效数据")
-        sys.exit(1)
+        raise ValueError("分类明细没有通过校验的数据，无法生成统计")
 
     # 全局唯一学员数 per (课程, 期次)
     course_session_people = df_clean.groupby(["course_name", "session"])["respondent_id"].nunique().to_dict()
@@ -150,7 +149,7 @@ def _compute_label_stats(df: pd.DataFrame, cs_people: dict) -> pd.DataFrame:
             "sentiment": sent,
             "反馈次数": len(grp),
             "反馈人数": people,
-            "有效反馈总人数": total_people,
+            "已分类反馈人数": total_people,
             "反馈人数占比": round(people / total_people, 4) if total_people > 0 else 0.0,
         })
     result = pd.DataFrame(rows)
@@ -166,7 +165,7 @@ def _compute_sentiment_summary(df: pd.DataFrame, sentiment: str, cs_people: dict
     subset = df[df["sentiment"] == sentiment]
     if subset.empty:
         return pd.DataFrame(columns=[
-            "课程名称", "期次", "category", "subcategory", "反馈人数", "反馈次数", "人数占比", "排名"
+            "课程名称", "期次", "category", "subcategory", "反馈人数", "反馈次数", "已分类反馈人数", "人数占比", "排名"
         ])
 
     groups = subset.groupby(["course_name", "session", "category", "subcategory"])
@@ -181,6 +180,7 @@ def _compute_sentiment_summary(df: pd.DataFrame, sentiment: str, cs_people: dict
             "subcategory": subcat,
             "反馈人数": people,
             "反馈次数": len(grp),
+            "已分类反馈人数": total_people,
             "人数占比": round(people / total_people, 4) if total_people > 0 else 0.0,
         })
 
@@ -219,7 +219,7 @@ def _compute_course_session_overview(df: pd.DataFrame) -> pd.DataFrame:
         rows.append({
             "课程名称": course,
             "期次": sess,
-            "有效反馈人数": total_people,
+            "已分类反馈人数": total_people,
             "拆分意见总数": total_items,
             "positive意见数": pos,
             "negative意见数": neg,

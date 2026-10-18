@@ -4,12 +4,11 @@ from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import JSONResponse
 
 import os
-import uuid
 import numpy as np
 import pandas as pd
 
 
-from agent.orchestrator import CourseInsightAgent
+from api.analysis_runner import analyze_upload
 
 
 router = APIRouter(
@@ -121,43 +120,7 @@ async def analysis(
     # 1. 保存上传文件
     # ==========================
 
-    upload_dir = "data/upload"
-
-
-    os.makedirs(
-        upload_dir,
-        exist_ok=True
-    )
-
-
-    filename = file.filename
-
-    file_path = os.path.join(
-        upload_dir,
-        filename
-    )
-
-
-    with open(
-        file_path,
-        "wb"
-    ) as f:
-
-        content = await file.read()
-
-        f.write(content)
-
-
-
-    # ==========================
-    # 2. 调用分析pipeline
-    # ==========================
-
-    agent = CourseInsightAgent()
-
-    result = agent.run(
-        file_path
-    )
+    result = await analyze_upload(file)
 
 
 
@@ -167,6 +130,22 @@ async def analysis(
 
 
     response = {
+
+        "status": result["analysis_status"],
+
+        "feedback_analyzed_count": result["feedback_analyzed_count"],
+
+        "feedback_failed_count": result["feedback_failed_count"],
+
+        "feedback_skipped_count": result["feedback_skipped_count"],
+
+        "feedback_response_count": result["feedback_response_count"],
+
+        "feedback_item_count": result["feedback_item_count"],
+
+        "feedback_errors": result["feedback_errors"],
+
+        "download_url": f"/download/{os.path.basename(result['report_path'])}",
 
 
         "course_name":

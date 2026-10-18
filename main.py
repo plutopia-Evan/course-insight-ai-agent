@@ -20,7 +20,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from survey_processor import (
+from core.survey_processor import (
     load_question_mapping,
     read_survey_file,
     wide_to_long,
@@ -33,7 +33,7 @@ from survey_processor import (
     compute_auto_coverage,
     apply_auto_category,
 )
-from statistics import (
+from core.statistics import (
     compute_global_common_stats,
     compute_course_common_stats,
     compute_period_specific_stats,
@@ -41,11 +41,11 @@ from statistics import (
     compute_overview_stats,
     compute_feedback_overview,
 )
-from text_cleaner import (
+from core.text_cleaner import (
     clean_text_feedback,
     generate_feedback_summary,
 )
-from output_writer import (
+from core.output_writer import (
     write_output_excel,
     build_file_identification,
     build_pending_review,

@@ -42,57 +42,16 @@ def priority_from_ratio(ratio: float) -> str:
 
 
 def _extract_numbers_from_text(text: str) -> List[Dict[str, str]]:
-    """提取文本中的所有数字及其单位/上下文。返回 [{raw, context}] 列表。
-    优先匹配带单位的数字，纯数字最后匹配，避免从 '0.1667' 中误提取 '1667'。"""
-    found = []
-    matched_spans = set()
-
-    # 优先：带小数的数字（如 0.1667, 16.67%）
-    decimal_pat = re.compile(r'\d+\.\d+')
-    for m in decimal_pat.finditer(text):
-        raw = m.group().strip()
-        start, end = m.start(), m.end()
-        # 往后看是否有 % 或 ％
-        if end < len(text) and text[end] in ('%', '％'):
-            raw = raw + text[end]
-            end += 1
-        matched_spans.add((start, end))
-        ctx_start = max(0, start - 15)
-        ctx_end = min(len(text), end + 5)
-        found.append({"raw": raw, "context": text[ctx_start:ctx_end]})
-
-    # 带单位的数字
-    unit_pat = re.compile(r'\d+\.?\d*\s*[%％人位名天小时分钟周个月年次遍轮]')
-    for m in unit_pat.finditer(text):
-        start, end = m.start(), m.end()
-        if any(s <= start < e or s < end <= e for s, e in matched_spans):
-            continue
-        matched_spans.add((start, end))
-        ctx_start = max(0, start - 15)
-        ctx_end = min(len(text), end + 5)
-        found.append({"raw": m.group().strip(), "context": text[ctx_start:ctx_end]})
-
-    # 纯数字（>=2位），排除已被覆盖的
-    pure_pat = re.compile(r'(?<![0-9.])[1-9]\d{1,}(?![0-9.])(?!\.\d)')
-    for m in pure_pat.finditer(text):
-        start, end = m.start(), m.end()
-        if any(s <= start < e or s < end <= e for s, e in matched_spans):
-            continue
-        ctx_start = max(0, start - 15)
-        ctx_end = min(len(text), end + 5)
-        found.append({"raw": m.group().strip(), "context": text[ctx_start:ctx_end]})
-
-    return found
-
-
-def _is_session_number(num_str: str) -> bool:
-    """判断数字是否为课程期次编号（如 01, 02, 第1期等）"""
-    n = num_str.strip()
-    try:
-        val = int(re.sub(r'[.０-９0-9]', lambda c: str(ord(c.group()) - ord('０') + ord('0')) if '０' <= c.group() <= '９' else c.group(), n))
-        return 1 <= val <= 99
-    except ValueError:
-        return False
+    """保留数值与紧随其后的单位，避免把“3天”拆成合法的“3”。"""
+    pattern = re.compile(
+        r'(?<![\d.])\d+(?:\.\d+)?\s*'
+        r'(?:小时|分钟|个月|[%％人位名条份项个天周月年次遍轮期])?'
+    )
+    return [
+        {"raw": match.group().strip(),
+         "context": text[max(0, match.start() - 15):min(len(text), match.end() + 5)]}
+        for match in pattern.finditer(text)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -189,10 +148,10 @@ class NewProblem(BaseModel):
     current_ratio: float
 
 
-class ImprovedProblem(BaseModel):
+class NotObservedLatestProblem(BaseModel):
     label: str
-    before_ratio: float
-    after_ratio: float
+    last_observed_session: str
+    last_observed_ratio: float
 
 
 class NextPriority(BaseModel):
@@ -255,7 +214,7 @@ def build_session_input(row, pos_df, neg_df, sug_df) -> dict:
     return {
         "course_name": course,
         "session": sess,
-        "valid_feedback_people": int(row["有效反馈人数"]),
+        "classified_feedback_people": int(row["已分类反馈人数"]),
         "total_items": int(row["拆分意见总数"]),
         "positive_count": int(row["positive意见数"]),
         "positive_ratio": float(row["positive占比"]),
@@ -303,8 +262,8 @@ def _save_cache(cache: dict):
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
 
-def _cache_key(model: str, input_json: str) -> str:
-    raw = f"{model}|{input_json}"
+def _cache_key(model: str, input_json: str, system_prompt: str = "") -> str:
+    raw = f"{model}|{system_prompt}|{input_json}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -326,15 +285,22 @@ def _call_llm(input_data: dict, system_prompt: str,
               max_retries: int = 3, use_cache: bool = True) -> Tuple[dict, dict]:
     """返回 (result, metadata)，metadata 包含 cache_hit/api_called/retries"""
     input_json = json.dumps(input_data, ensure_ascii=False)
-    ck = _cache_key(model, input_json)
+    ck = _cache_key(model, input_json, system_prompt)
     meta = {"_cache_hit": False, "_api_called": 0, "_retries": 0}
 
     if use_cache:
         cache = _load_cache()
         if ck in cache:
-            print("    [缓存命中]")
-            meta["_cache_hit"] = True
-            return cache[ck], meta
+            try:
+                parsed = model_type(**cache[ck])
+                errors = _validate_summary_result(parsed, input_data)
+            except (ValidationError, TypeError, ValueError) as exc:
+                errors = [str(exc)]
+            if not errors:
+                print("    [缓存命中]")
+                meta["_cache_hit"] = True
+                return parsed.model_dump(), meta
+            print(f"    [忽略无效缓存] {'; '.join(errors)}")
 
     user_content = input_json
     last_error = None
@@ -364,8 +330,8 @@ def _call_llm(input_data: dict, system_prompt: str,
             # Pydantic 校验
             parsed = model_type(**data)
 
-            # 额外校验: people/ratio 是否存在于输入
-            errors = _validate_numbers(parsed, input_data)
+            # 与缓存命中路径使用同一套校验。
+            errors = _validate_summary_result(parsed, input_data)
             if errors:
                 last_error = "; ".join(errors)
                 continue
@@ -387,6 +353,85 @@ def _call_llm(input_data: dict, system_prompt: str,
 
     meta["_retries"] = max_retries
     return {"_error": f"重试{max_retries}次后仍失败: {last_error}"}, meta
+
+
+def _validate_summary_result(parsed, input_data: dict) -> List[str]:
+    """校验总结身份和结构化数据来源。"""
+    errors = []
+    expected_course = input_data.get("course_name")
+    if parsed.course_name != expected_course:
+        errors.append(f"course_name 不一致: 期望 {expected_course}, 实际 {parsed.course_name}")
+    if isinstance(parsed, SessionSummary):
+        expected_session = input_data.get("session")
+        if str(parsed.session) != str(expected_session):
+            errors.append(f"session 不一致: 期望 {expected_session}, 实际 {parsed.session}")
+        errors.extend(_validate_numbers(parsed, input_data))
+    elif isinstance(parsed, TrendSummary):
+        priorities = [item.priority for item in parsed.next_session_priorities]
+        if len(priorities) != len(set(priorities)) or any(p < 1 or p > 5 for p in priorities):
+            errors.append("next_session_priorities 的序号必须是 1-5 且不重复")
+        text_fields = [("trend_summary", parsed.trend_summary)]
+        for index, item in enumerate(parsed.next_session_priorities):
+            text_fields.extend([
+                (f"next_session_priorities[{index}].action", item.action),
+                (f"next_session_priorities[{index}].reason", item.reason),
+            ])
+        errors.extend(_audit_text_numbers(text_fields, input_data))
+    return errors
+
+
+def _audit_text_numbers(text_fields: List[Tuple[str, str]], input_data: dict) -> List[str]:
+    """只允许输入中出现的计数、占比和期次编号，不混用单位。"""
+    counts = set()
+    ratios = set()
+    session_numbers = set()
+
+    def collect_session(data: dict):
+        for key in ("classified_feedback_people", "total_items", "positive_count",
+                    "negative_count", "suggestion_count"):
+            value = data.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                counts.add(str(value))
+        for key in ("positive_ratio", "negative_ratio", "suggestion_ratio"):
+            value = data.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                ratios.add(float(value))
+        for key in ("top_positive", "top_negative", "top_suggestions"):
+            for item in data.get(key, []):
+                if isinstance(item.get("people"), (int, float)):
+                    counts.add(str(item["people"]))
+                if isinstance(item.get("ratio"), (int, float)):
+                    ratios.add(float(item["ratio"]))
+        session_numbers.update(re.findall(r"\d+", str(data.get("session", ""))))
+
+    collect_session(input_data)
+    for session in input_data.get("sessions", []):
+        collect_session(session)
+    for key in ("persistent_problems", "new_problems", "not_observed_latest"):
+        for item in input_data.get("computed_trends", {}).get(key, []):
+            for metric in ("current_ratio", "last_observed_ratio"):
+                if isinstance(item.get(metric), (int, float)):
+                    ratios.add(float(item[metric]))
+
+    allowed = set(counts)
+    allowed.update(f"{count}{unit}" for count in counts for unit in ("人", "位", "名", "条", "份"))
+    for ratio in ratios:
+        allowed.update(str(round(ratio, precision)) for precision in range(1, 5))
+        allowed.update(f"{ratio:.{precision}%}" for precision in range(5))
+
+    errors = []
+    for field_name, value in text_fields:
+        for token in _extract_numbers_from_text(str(value)):
+            raw = re.sub(r"\s+", "", token["raw"]).replace("％", "%")
+            session_match = re.fullmatch(r"(\d+)期", raw)
+            if session_match and any(int(session_match.group(1)) == int(n) for n in session_numbers):
+                continue
+            if raw not in allowed:
+                errors.append(
+                    f"{field_name}: 数字'{raw}'无法追溯到同单位的输入数据 "
+                    f"(上下文: {token['context']})"
+                )
+    return errors
 
 
 def _validate_numbers(parsed, input_data) -> List[str]:
@@ -474,53 +519,7 @@ def _validate_numbers(parsed, input_data) -> List[str]:
         text_fields.append((f"recommendations[{i}].reason", r.reason))
     text_fields.append(("management_summary", getattr(parsed, "management_summary", "")))
 
-    # 构建所有合法数字集合
-    valid_numbers = set()
-    # 来自输入数据的people/ratio
-    for _, ppl, rto in pos_items + neg_items + sug_items:
-        valid_numbers.add(str(ppl))
-        # ratio 的多种精度形式
-        for precision in [2, 3, 4]:
-            valid_numbers.add(str(round(rto, precision)))
-        # 百分比形式 (多种精度)
-        for pct_precision in [0, 1, 2]:
-            valid_numbers.add(f"{rto:{pct_precision}.{pct_precision}%}")
-        # 去掉末尾零的百分比 (如 "16.67%", "33.3%")
-        pct_str = f"{rto:.4%}"  # xx.xxxx%
-        valid_numbers.add(pct_str)
-        pct_str_3 = f"{rto:.3%}"
-        valid_numbers.add(pct_str_3)
-        pct_str_2 = f"{rto:.2%}"
-        valid_numbers.add(pct_str_2)
-    # 基础统计数字
-    for key in ["valid_feedback_people", "total_items", "positive_count", "negative_count",
-                "suggestion_count", "positive_ratio", "negative_ratio", "suggestion_ratio"]:
-        v = input_data.get(key)
-        if v is not None:
-            valid_numbers.add(str(v))
-            if isinstance(v, float):
-                for precision in [2, 3, 4]:
-                    valid_numbers.add(str(round(v, precision)))
-                valid_numbers.add(f"{v:.1%}")
-                valid_numbers.add(f"{v:.2%}")
-    # 期次编号
-    session_str = str(input_data.get("session", ""))
-
-    for field_name, text in text_fields:
-        nums = _extract_numbers_from_text(text)
-        for n in nums:
-            raw = n["raw"]
-            # 允许期次编号
-            if _is_session_number(raw) or raw in session_str or session_str in raw:
-                continue
-            # 允许纯数字用于排名 (#1, #2)
-            if re.match(r'^\d+$', raw) and int(raw) <= 10:
-                continue
-            # 检查是否在合法集合
-            matched = any(vn in raw or raw in vn for vn in valid_numbers)
-            if not matched:
-                errors.append(f"{field_name}: 数字'{raw}'无法追溯到输入数据 (上下文: {n['context']})")
-
+    errors.extend(_audit_text_numbers(text_fields, input_data))
     return errors
 
 
@@ -528,11 +527,9 @@ def _validate_numbers(parsed, input_data) -> List[str]:
 # Python 跨期趋势计算
 # ---------------------------------------------------------------------------
 
-def _compute_cross_session_trends(course: str, sessions_data: List[dict],
-                                   session_results: List[dict]) -> dict:
+def _compute_cross_session_trends(course: str, sessions_data: List[dict]) -> dict:
     """纯 Python 计算跨期趋势，不依赖模型。"""
     # 收集所有期次的 negative subcategory 及其 ratio
-    # session_results 按 sessions_data 顺序对应
     session_labels = [s["session"] for s in sessions_data]
 
     neg_by_session: Dict[str, Dict[str, float]] = {}
@@ -547,34 +544,34 @@ def _compute_cross_session_trends(course: str, sessions_data: List[dict],
         all_labels.update(sess_data.keys())
 
     latest_session = session_labels[-1]
-    earlier_sessions = session_labels[:-1]
-
-    # persistent: 同一 label 在 >= 2 期次出现
+    # 只比较最新一期与上次实际观察到该标签的期次。
     persistent = []
-    for label in all_labels:
+    for label in sorted(all_labels):
         appear = [(s, neg_by_session[s][label])
                   for s in session_labels if label in neg_by_session[s]]
-        if len(appear) < 2:
+        if len(appear) < 2 or appear[-1][0] != latest_session:
             continue
         before_ratio = appear[-2][1]
         after_ratio = appear[-1][1]
         diff = after_ratio - before_ratio
         if abs(diff) < 0.05:
-            trend = "stable"
+            trend = "little_change"
         elif diff >= 0.05:
-            trend = "worsening"
+            trend = "increased"
         else:
-            trend = "improving"
+            trend = "decreased"
+        before_people = next(s["classified_feedback_people"] for s in sessions_data if s["session"] == appear[-2][0])
+        after_people = next(s["classified_feedback_people"] for s in sessions_data if s["session"] == latest_session)
         persistent.append(PersistentProblem(
             label=label,
             sessions=[a[0] for a in appear],
             trend=trend,
-            evidence=f"人数占比从 {before_ratio:.1%} 变为 {after_ratio:.1%}"
+            evidence=f"{appear[-2][0]}已分类{before_people}人中占{before_ratio:.1%}；{latest_session}已分类{after_people}人中占{after_ratio:.1%}"
         ))
 
-    # new: 仅在最新期次出现
+    # 仅在最新一期的已分类反馈中观察到
     new = []
-    for label in all_labels:
+    for label in sorted(all_labels):
         appear = [s for s in session_labels if label in neg_by_session[s]]
         if latest_session in appear and len(appear) == 1:
             cur_ratio = neg_by_session[latest_session][label]
@@ -584,22 +581,22 @@ def _compute_cross_session_trends(course: str, sessions_data: List[dict],
                 current_ratio=cur_ratio,
             ))
 
-    # improved: 仅在早期期次出现且后期消失（不在最新期次）
-    improved = []
-    for label in all_labels:
+    # 未在最新一期观察到，并不等于问题已经改善。
+    not_observed_latest = []
+    for label in sorted(all_labels):
         appear = [s for s in session_labels if label in neg_by_session[s]]
         if latest_session not in appear and len(appear) >= 1:
-            before_ratio = neg_by_session[appear[0]][label]
-            improved.append(ImprovedProblem(
+            last_session = appear[-1]
+            not_observed_latest.append(NotObservedLatestProblem(
                 label=label,
-                before_ratio=before_ratio,
-                after_ratio=0.0,
+                last_observed_session=last_session,
+                last_observed_ratio=neg_by_session[last_session][label],
             ))
 
     return {
         "persistent_problems": [p.model_dump() for p in persistent],
         "new_problems": [n.model_dump() for n in new],
-        "improved_problems": [i.model_dump() for i in improved],
+        "not_observed_latest": [i.model_dump() for i in not_observed_latest],
     }
 
 
@@ -611,6 +608,13 @@ def _build_trend_llm_input(course: str, sessions_data: List[dict],
         "sessions": sessions_data,
         "computed_trends": computed_trends,
     }
+
+
+def _session_sort_key(session) -> tuple:
+    """常见“第2期/第10期”按数字顺序排列，其余按文本排列。"""
+    value = str(session)
+    match = re.search(r"\d+", value)
+    return (0, int(match.group()), value) if match else (1, value)
 
 
 # ---------------------------------------------------------------------------
@@ -679,7 +683,9 @@ def generate_summaries(
     courses = overview["course_name"].unique()
 
     for course in courses:
-        course_sessions = overview[overview["course_name"] == course]
+        course_sessions = overview[overview["course_name"] == course].copy()
+        course_sessions["_session_order"] = course_sessions["session"].map(_session_sort_key)
+        course_sessions = course_sessions.sort_values("_session_order")
         if len(course_sessions) < 2:
             continue
 
@@ -690,10 +696,10 @@ def generate_summaries(
             sessions_data.append(build_session_input(row, pos_df, neg_df, sug_df))
 
         # Python 计算结构性趋势
-        computed = _compute_cross_session_trends(course, sessions_data, session_results)
+        computed = _compute_cross_session_trends(course, sessions_data)
         print(f"  Python计算: {len(computed['persistent_problems'])}持续问题, "
-              f"{len(computed['new_problems'])}新问题, "
-              f"{len(computed['improved_problems'])}改善")
+              f"{len(computed['new_problems'])}仅本期观察到, "
+              f"{len(computed['not_observed_latest'])}本期未观察到")
 
         # 模型只生成 NL trend_summary + next_session_priorities
         trend_llm_input = _build_trend_llm_input(course, sessions_data, computed)
@@ -712,10 +718,10 @@ def generate_summaries(
             # 合并 Python 计算的结构性数据
             result["persistent_problems"] = computed["persistent_problems"]
             result["new_problems"] = computed["new_problems"]
-            result["improved_problems"] = computed["improved_problems"]
+            result["not_observed_latest"] = computed["not_observed_latest"]
             print(f"  跨期成功: {len(computed['persistent_problems'])}持续问题, "
-                  f"{len(computed['new_problems'])}新问题, "
-                  f"{len(computed['improved_problems'])}改善"
+                  f"{len(computed['new_problems'])}仅本期观察到, "
+                  f"{len(computed['not_observed_latest'])}本期未观察到"
                   f"{' [cache]' if meta['_cache_hit'] else ''}")
             trend_results.append(result)
 
@@ -809,7 +815,7 @@ def _write_output(
             f"{p['label']}({p['trend']})" for p in t.get("persistent_problems", [])
         )
         new_str = "；".join(p["label"] for p in t.get("new_problems", []))
-        improved_str = "；".join(p["label"] for p in t.get("improved_problems", []))
+        not_observed_str = "；".join(p["label"] for p in t.get("not_observed_latest", []))
         priorities_str = "；".join(
             f"#{q['priority']} {q['action']}" for q in t.get("next_session_priorities", [])
         )
@@ -817,8 +823,8 @@ def _write_output(
             "课程名称": t.get("course_name", ""),
             "趋势总结": t.get("trend_summary", ""),
             "持续问题": persistent_str,
-            "新出现问题": new_str,
-            "已改善问题": improved_str,
+            "仅本期观察到的问题": new_str,
+            "本期未观察到的问题": not_observed_str,
             "下一期优先事项": priorities_str,
         })
     trend_df = pd.DataFrame(trend_rows)

@@ -23,6 +23,7 @@
    - 反例：source_label="资料发放较晚" 时，action 不得同时写"增加互动环节"
 6. **文本中禁止编造数字**：overall_assessment、description、reason、management_summary、trend_summary 中不得出现"3天""20分钟""至少2次"等输入数据中不存在的数字。只能引用 people 和 ratio 中的数字，或使用"多数""部分""少量"等定性描述。期次编号（如第01期）除外。
 7. **必须输出严格 JSON**：不要输出 Markdown 代码块、不要输出解释文字，只输出 JSON 对象。
+8. **统计口径**：所有反馈人数占比均以该课程该期“已成功分类且数据校验通过的反馈学员数”为分母。classified_feedback_people 不是课程总学员数或问卷总答卷人数；不同期次样本可能不同。
 
 ## 单期总结输出格式
 
@@ -82,7 +83,7 @@
 
 ## 跨期趋势输出格式
 
-跨期趋势的结构性数据（persistent_problems/new_problems/improved_problems）已由 Python 预先计算，你只需要基于这些数据生成：
+跨期趋势的结构性数据（persistent_problems/new_problems/not_observed_latest）已由 Python 预先计算，你只需要基于这些数据生成：
 
 ```json
 {
@@ -101,14 +102,14 @@
 ## 跨期判断规则（Python 预计算，仅供参考）
 
 输入中的 computed_trends 字段包含已计算好的：
-- persistent_problems：同一 label 在多个期次出现，trend 为 worsening/improving/stable
-- new_problems：仅在最新期次出现的问题
-- improved_problems：仅在早期期次出现且后期消失的问题
+- persistent_problems：同一 label 在早期和最新期次均出现，trend 为 increased/decreased/little_change，仅表示已分类反馈中的人数占比变化
+- new_problems：仅在最新期次的已分类反馈中观察到的标签，不能断言问题此前不存在
+- not_observed_latest：早期期次观察到、最新期次未观察到的标签，不能断言问题已经改善或消失
 
 你的任务是：
-1. 基于 computed_trends 中的数据用自然语言撰写 trend_summary
-2. 根据持续问题和新问题，排出 next_session_priorities（最多 5 项）
-3. 不得编造 computed_trends 中不存在的趋势或数字
+1. 基于 computed_trends 中的数据用自然语言撰写 trend_summary；用“观察到的占比上升/下降/变化较小”描述，不得写成“恶化/改善已证实”
+2. 根据持续问题和仅本期观察到的问题，排出 next_session_priorities（最多 5 项）
+3. 不得编造 computed_trends 中不存在的趋势或数字；本期未观察到不等于占比为零
 
 ## 当前任务
 

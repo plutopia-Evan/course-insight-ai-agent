@@ -23,13 +23,13 @@ from typing import Any, Callable, Dict, List, Optional
 
 import pandas as pd
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from batch_deepseek_feedback import filter_valid_feedback, _col
-from deepseek_feedback_analyzer import deepseek_analyze_feedback
-from ai_feedback_analyzer import flatten_analysis_results
-from ai_feedback_statistics import generate_statistics
-from ai_summary_generator import generate_summaries
+from scripts.batch_deepseek_feedback import filter_valid_feedback, _col
+from llm.deepseek_feedback_analyzer import deepseek_analyze_feedback
+from llm.ai_feedback_analyzer import flatten_analysis_results
+from scripts.ai_feedback_statistics import generate_statistics
+from llm.ai_summary_generator import generate_summaries
 
 
 # ---------------------------------------------------------------------------
@@ -156,8 +156,19 @@ def run_ai_pipeline(
             })
         else:
             n_items = len(result.get("items", []))
-            print(f"  [{idx+1}/{total}] {fid} 成功: {n_items} 条意见"
-                  + (" [缓存]" if result.get("_cache_hit") else ""))
+            if n_items == 0:
+                failures += 1
+                errors.append({
+                    "feedback_id": fid,
+                    "课程名称": course_name,
+                    "期次": session,
+                    "学员编号": respondent,
+                    "清洗后反馈": feedback_text,
+                    "错误详情": "分类结果为空",
+                })
+            else:
+                print(f"  [{idx+1}/{total}] {fid} 成功: {n_items} 条意见"
+                      + (" [缓存]" if result.get("_cache_hit") else ""))
 
         results.append(result)
 
@@ -201,17 +212,26 @@ def run_ai_pipeline(
     if progress_callback:
         progress_callback({"stage": "statistics"})
 
-    print("[Pipeline] 阶段2 统计...")
-    label_stats, positive_summary, negative_summary, suggestion_summary, course_overview = \
-        _run_statistics(classification_detail, errors, start_time)
-
-    # ---- 阶段 3: 总结 ----
-    if progress_callback:
-        progress_callback({"stage": "summary"})
-
-    print("[Pipeline] 阶段3 总结...")
-    course_summary, course_summary_detail, trend_summary, summary_errors = \
-        _run_summaries(use_cache, errors, start_time)
+    with tempfile.TemporaryDirectory(prefix="course-insight-ai-") as work_dir:
+        print("[Pipeline] 阶段2 统计...")
+        try:
+            label_stats, positive_summary, negative_summary, suggestion_summary, course_overview = \
+                _run_statistics(classification_detail, work_dir)
+        except Exception as exc:
+            errors.append({"阶段": "statistics", "错误详情": str(exc)})
+            print(f"  统计阶段失败: {exc}")
+            label_stats = positive_summary = negative_summary = suggestion_summary = course_overview = pd.DataFrame()
+            course_summary = course_summary_detail = trend_summary = pd.DataFrame()
+            summary_errors = []
+        else:
+            # ---- 阶段 3: 总结 ----
+            if progress_callback:
+                progress_callback({"stage": "summary"})
+            print("[Pipeline] 阶段3 总结...")
+            course_summary, course_summary_detail, trend_summary, summary_errors = \
+                _run_summaries(use_cache, work_dir)
+            for summary_error in summary_errors:
+                errors.append({"阶段": "summary", "错误详情": summary_error.get("error", str(summary_error))})
 
     # ---- 汇总 ----
     end_time = datetime.now()
@@ -236,7 +256,7 @@ def run_ai_pipeline(
         "errors": pd.DataFrame(errors) if errors else pd.DataFrame(columns=["feedback_id", "错误详情"]),
         "api_summary": _api_summary_df(start_time, success_count, summary_success,
                                         summary_failures, cache_hits, api_calls,
-                                        failures, ""),
+                                        failures, "统计失败" if any(e.get("阶段") == "statistics" for e in errors) else ""),
     }
 
 
@@ -251,29 +271,23 @@ def _safe_get(row, df: pd.DataFrame, candidates: List[str], default: str = "") -
 
 def _run_statistics(
     classification_detail: pd.DataFrame,
-    errors: List[dict],
-    start_time: datetime,
+    work_dir: str,
 ) -> tuple:
     """保存分类结果到临时 Excel，调用 generate_statistics，读取结果。"""
-    tmpdir = os.path.join("data", "output")
-    os.makedirs(tmpdir, exist_ok=True)
-    class_path = os.path.join(tmpdir, "_pipeline_classification.xlsx")
-    stats_path = os.path.join(tmpdir, "_pipeline_statistics.xlsx")
+    class_path = os.path.join(work_dir, "classification.xlsx")
+    stats_path = os.path.join(work_dir, "statistics.xlsx")
 
-    try:
-        with pd.ExcelWriter(class_path, engine="openpyxl") as writer:
-            classification_detail.to_excel(writer, sheet_name="AI反馈分类明细", index=False)
-        generate_statistics(input_path=class_path, output_path=stats_path)
-    except Exception as e:
-        print(f"  统计阶段失败: {e}")
-        empty = pd.DataFrame()
-        return empty, empty, empty, empty, empty
+    with pd.ExcelWriter(class_path, engine="openpyxl") as writer:
+        classification_detail.to_excel(writer, sheet_name="AI反馈分类明细", index=False)
+    generate_statistics(input_path=class_path, output_path=stats_path)
 
     label_stats = _safe_read(stats_path, "AI标签统计")
     positive_summary = _safe_read(stats_path, "AI正向反馈汇总")
     negative_summary = _safe_read(stats_path, "AI负向问题汇总")
     suggestion_summary = _safe_read(stats_path, "AI改进建议汇总")
     course_overview = _safe_read(stats_path, "课程期次反馈概览")
+    if course_overview.empty:
+        raise ValueError("统计文件缺少有效的课程期次概览")
 
     print(f"  统计完成: 标签统计 {len(label_stats)} 行, 概览 {len(course_overview)} 课程期次")
     return label_stats, positive_summary, negative_summary, suggestion_summary, course_overview
@@ -281,14 +295,11 @@ def _run_statistics(
 
 def _run_summaries(
     use_cache: bool,
-    errors: List[dict],
-    start_time: datetime,
+    work_dir: str,
 ) -> tuple:
     """调用 generate_summaries，读取结果。"""
-    tmpdir = os.path.join("data", "output")
-    os.makedirs(tmpdir, exist_ok=True)
-    stats_path = os.path.join(tmpdir, "_pipeline_statistics.xlsx")
-    summary_path = os.path.join(tmpdir, "_pipeline_summary.xlsx")
+    stats_path = os.path.join(work_dir, "statistics.xlsx")
+    summary_path = os.path.join(work_dir, "summary.xlsx")
 
     if not os.path.exists(stats_path):
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), []
@@ -304,6 +315,11 @@ def _run_summaries(
         print(f"  总结阶段失败: {e}")
         summary_errors.append({"阶段": "summary", "error": str(e)})
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), summary_errors
+
+    if not os.path.exists(summary_path):
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), [
+            {"阶段": "summary", "error": "总结文件未生成"}
+        ]
 
     course_summary = _safe_read(summary_path, "课程AI总结")
     course_summary_detail = _safe_read(summary_path, "课程AI总结明细")

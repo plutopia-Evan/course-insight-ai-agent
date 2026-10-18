@@ -2,13 +2,14 @@ from agent.survey_agent import SurveyAgent
 from agent.statistics_agent import StatisticsAgent
 from agent.feedback_agent import FeedbackAgent
 from agent.report_agent import ReportAgent
+from core.analysis_summary import build_analysis_summary
 
 
 
 class CourseInsightAgent:
 
 
-    def __init__(self):
+    def __init__(self, feedback_analyzer=None):
 
         # 初始化各个Agent
 
@@ -16,7 +17,7 @@ class CourseInsightAgent:
 
         self.statistics_agent = StatisticsAgent()
 
-        self.feedback_agent = FeedbackAgent()
+        self.feedback_agent = FeedbackAgent(feedback_analyzer)
 
         self.report_agent = ReportAgent()
 
@@ -93,6 +94,17 @@ class CourseInsightAgent:
             **feedback_result
 
         }
+
+        summary = build_analysis_summary(
+            survey_result["df_long"],
+            statistics_result["valid_rating"],
+            statistics_result["anomalies"],
+            feedback_result["feedback_results"],
+            feedback_result["feedback_errors"],
+            feedback_result["feedback_skipped_count"],
+        )
+        context["summary"] = summary
+        context.update(summary)
 
 
 

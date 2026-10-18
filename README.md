@@ -2,32 +2,47 @@
 
 批量读取课程问卷 Excel，自动清洗、映射、统计分析，生成多维度分析报告。
 
+## 当前 FastAPI 分析流程
+
+`/analysis`、`/generate_report` 和 `/dify/analyze` 共用同一条问卷分析流程。评分由 Python 计算；有效文本反馈默认调用 DeepSeek，一次返回意见拆分、分类、情感和原文证据。空白及低信息反馈不会发送给模型。
+
+运行服务前需设置 `.env.example` 中的 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL`。若模型分析失败，评分统计仍会生成，结果状态为 `partial`，失败明细会返回到接口并写入报告的“AI分析错误”工作表。`feedback_count` 表示拆分出的意见数；`feedback_response_count` 表示文本题记录数。
+
 ## 环境要求
 
-- Python 3.11+
+- Python 3.13（部署环境；已有的 Python 3.10 本地环境也可运行，但不再接收安全更新）
 - pandas
 - openpyxl
 - numpy
-- streamlit
+- Streamlit（仅网页界面需要，见 `requirements-ui.txt`）
 
 ## 安装
 
+在本项目根目录安装 API 与命令行依赖：
+
 ```cmd
-cd D:\course-survey-tool
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+```
+
+需要运行 Streamlit 网页界面时安装：
+
+```cmd
+python -m pip install -r requirements-ui.txt
 ```
 
 ## 目录结构
 
 ```
-course-survey-tool/
+course-insight-ai-agent/
 ├── app.py                     # Streamlit 网页界面入口
 ├── main.py                    # 命令行主入口
-├── survey_processor.py        # 数据读取、宽转长、题目映射、异常检测
-├── statistics.py              # 评分统计计算
-├── text_cleaner.py            # 文本反馈清洗
-├── output_writer.py           # Excel 输出生成
+├── core/                      # 数据读取、清洗、评分统计和 Excel 输出
+├── api/                       # FastAPI 接口
+├── agent/                     # 单文件分析流程
+├── llm/                       # 模型调用与校验
+├── scripts/                   # 批量 AI 分析流程
 ├── requirements.txt
+├── requirements-ui.txt
 ├── README.md
 ├── config/
 │   └── question_mapping.xlsx  # 题目映射配置
@@ -74,19 +89,29 @@ category 说明：
 
 ## 运行
 
+### FastAPI 与部署
+
+本地启动 API：
+
+```cmd
+python -m uvicorn api.main_api:app --host 0.0.0.0 --port 8000
+```
+
+`render.yaml` 配置的是 FastAPI 服务，`Dockerfile` 也启动同一个 API；两者都不会自动启动 Streamlit 界面。首次通过 Render Blueprint 创建服务时，Render 会提示填写 `DEEPSEEK_API_KEY` 和 `SERVICE_API_KEY`；已有服务需要在 Render 后台手动添加。`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL` 已在 Blueprint 中设置。`SERVICE_API_KEY` 应使用独立生成的长随机值，不要与 DeepSeek 密钥相同，也不要提交到 Git。若未配置该值，受保护接口会返回 503；无效或缺失的令牌会返回 401。调用分析、反馈、报告生成和下载接口时，发送请求头 `Authorization: Bearer <SERVICE_API_KEY>`。根路径 `/` 可用于无需密钥的运行状态检查。每次分析生成独立的报告文件，避免同一课程、期次重复分析时覆盖旧报告。报告默认保存在服务本地的 `data/output/`；若部署环境提供持久化目录，可通过 `REPORT_OUTPUT_DIR` 指向该目录。下载链接仍依赖处理请求的服务实例能访问该文件；多实例共享报告需要后续接入共享存储。
+
+GitHub Actions 会在 PR 上运行无密钥的自动测试。本地构建 Docker 镜像时，`.dockerignore` 会排除 `.env` 和运行数据；线上密钥应通过部署环境变量提供。
+
 ### 方式一：网页界面（推荐）
 
 通过浏览器上传文件、在线查看结果、下载分析报告：
 
 ```cmd
-cd D:\course-survey-tool
 streamlit run app.py
 ```
 
 如果 `streamlit` 命令未加入 PATH，可使用：
 
 ```cmd
-cd D:\course-survey-tool
 python -m streamlit run app.py
 ```
 
@@ -109,7 +134,6 @@ python -m streamlit run app.py
 批处理 `data/input/` 目录下的所有问卷文件：
 
 ```cmd
-cd D:\course-survey-tool
 python main.py
 ```
 
@@ -146,3 +170,24 @@ python main.py
 - 纯空白反馈：学员未填写任何内容
 - 低信息量反馈：仅包含"无""挺好""很好"等无实质信息的内容
 - 有效反馈：包含实质性建议或意见
+
+### AI 反馈统计口径
+
+- `已分类反馈人数`：同一课程、同一期次中，至少有一条意见成功分类且通过数据校验的去重学员数。它不等于课程总学员数，也不等于全部问卷答卷人数。
+- 标签和正向、负向、建议汇总中的人数占比，均以该课程该期的`已分类反馈人数`为分母；同一学员提出多条相同意见只计一人，反馈次数仍按意见条数计算。
+- 概览中的 `positive占比` 等以拆分意见总数为分母，属于意见条数占比，不是学员人数占比。
+- 跨期趋势仅描述已分类反馈中的观察结果。最新一期未观察到某标签，不能据此判断该问题已经改善；各期分类失败或样本差异也可能影响占比。
+
+### AI 分类标签与缓存
+
+分类标签以 `config/feedback_taxonomy.yaml` 为准，分类提示词会从该文件生成可选标签。修改标签配置或分类提示词后，分类缓存会自动失效；命中缓存时也会重新校验标签、情感和原文证据。
+
+标签配置同时规定情感方向：明确的正向标签只接受 `positive`，"希望增加/提供"类标签只接受 `suggestion`，问题类标签接受 `negative` 或 `suggestion`。"其他问题"也可用于中性陈述。模型返回不符合方向的组合时会重试，仍不符合则记录失败。
+
+课程 AI 总结在读取缓存时会重新校验课程、期次和结构化人数与占比；无效缓存会被忽略并重新生成。单期及跨期总结中的数字会按原单位核对，不能把输入中的人数当成天数或小时数使用。
+
+### 自动测试
+
+在项目根目录运行 `python -m pytest -q`。其中 `tests/test_end_to_end_api.py` 会生成脱敏问卷，使用模拟反馈分类器核对三个 API 返回值、报告内容和下载路径，不需要模型密钥。`tests/test_production_model_flow.py` 会用受控模型响应检查默认 DeepSeek 分析器是否接入完整问卷流程。`tests/conftest.py` 将需要真实服务、密钥或手工数据文件的旧脚本排除在自动测试收集之外；这些脚本仍保留在 `tests/` 中供手工检查。
+
+配置好 `.env` 后，可在项目根目录运行 `python -m scripts.smoke_deepseek`，用一条固定、无个人信息的反馈发起一次不使用缓存的真实模型调用。该检查不生成问卷报告；线上 HTTP 部署仍需单独验收。
