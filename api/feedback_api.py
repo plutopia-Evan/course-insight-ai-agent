@@ -1,5 +1,9 @@
 from fastapi import APIRouter
-from pydantic import BaseModel
+from typing import Annotated
+
+from pydantic import BaseModel, Field, StringConstraints
+
+from api.request_limits import MAX_FEEDBACK_CHARS, MAX_FEEDBACK_ITEMS
 
 from llm.deepseek_feedback_analyzer import (
     deepseek_analyze_feedback
@@ -11,7 +15,9 @@ router = APIRouter(
 )
 
 class FeedbackRequest(BaseModel):
-    feedback_texts:list[str]
+    feedback_texts: list[
+        Annotated[str, StringConstraints(max_length=MAX_FEEDBACK_CHARS)]
+    ] = Field(max_length=MAX_FEEDBACK_ITEMS)
 
 
 @router.post("/feedback_analysis")

@@ -6,6 +6,8 @@ from tempfile import TemporaryDirectory
 
 from fastapi import HTTPException, UploadFile
 
+from api.request_limits import MAX_UPLOAD_BYTES
+
 
 @asynccontextmanager
 async def saved_upload(file: UploadFile):
@@ -21,7 +23,14 @@ async def saved_upload(file: UploadFile):
         path = Path(directory) / filename
         try:
             with path.open("wb") as output:
+                total_bytes = 0
                 while chunk := await file.read(1024 * 1024):
+                    total_bytes += len(chunk)
+                    if total_bytes > MAX_UPLOAD_BYTES:
+                        raise HTTPException(
+                            status_code=413,
+                            detail="问卷文件不能超过 10 MB",
+                        )
                     output.write(chunk)
             yield path
         finally:
