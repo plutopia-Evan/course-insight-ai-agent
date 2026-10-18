@@ -1,0 +1,5 @@
+"""Per-request limits for the public API."""
+
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_FEEDBACK_ITEMS = 100
+MAX_FEEDBACK_CHARS = 2000

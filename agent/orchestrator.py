@@ -25,7 +25,10 @@ class CourseInsightAgent:
 
     def run(
         self,
-        file_path
+        file_path,
+        *,
+        max_feedback_count=None,
+        max_feedback_chars=None,
     ):
 
 
@@ -73,7 +76,9 @@ class CourseInsightAgent:
         # ==========================
 
         feedback_result = self.feedback_agent.run(
-            survey_result
+            survey_result,
+            max_feedback_count=max_feedback_count,
+            max_feedback_chars=max_feedback_chars,
         )
 
 

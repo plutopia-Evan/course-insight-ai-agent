@@ -6,16 +6,38 @@ from core.text_cleaner import is_low_info
 from llm.deepseek_feedback_analyzer import deepseek_analyze_feedback
 
 
+class FeedbackLimitExceeded(ValueError):
+    """A survey exceeds the API's per-request model budget."""
+
+
 class FeedbackAgent:
     def __init__(self, analyze_feedback=None):
         # Tests can explicitly inject a deterministic analyzer; production uses DeepSeek.
         self.analyze_feedback = analyze_feedback or deepseek_analyze_feedback
 
-    def run(self, survey_result):
+    def run(self, survey_result, *, max_feedback_count=None, max_feedback_chars=None):
         df_long = survey_result["df_long"]
         text_df = df_long[df_long["question_type"] == "text"]
         course_name = survey_result.get("course_name", "")
         session = survey_result.get("session", "")
+
+        # Reject the entire request before making any billable model calls.
+        if max_feedback_count is not None or max_feedback_chars is not None:
+            analyzable_count = 0
+            for _, row in text_df.iterrows():
+                value = row.get("response_value")
+                text = "" if pd.isna(value) else str(value).strip()
+                if not text or is_low_info(text):
+                    continue
+                analyzable_count += 1
+                if max_feedback_chars is not None and len(text) > max_feedback_chars:
+                    raise FeedbackLimitExceeded(
+                        f"单条有效反馈不能超过 {max_feedback_chars} 字符"
+                    )
+                if max_feedback_count is not None and analyzable_count > max_feedback_count:
+                    raise FeedbackLimitExceeded(
+                        f"单次问卷不能超过 {max_feedback_count} 条有效反馈"
+                    )
 
         results = []
         errors = []
