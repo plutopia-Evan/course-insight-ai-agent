@@ -22,6 +22,9 @@ def analysis_payload(result: dict) -> dict:
     if result.get("analysis_id"):
         payload["analysis_id"] = result["analysis_id"]
         payload["result_url"] = f"/analyses/{result['analysis_id']}"
+    for name in ("data_quality_issues", "ai_tables", "model_usage"):
+        if name in result:
+            payload[name] = result[name]
     return payload
 
 

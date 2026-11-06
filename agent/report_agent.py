@@ -43,5 +43,10 @@ class ReportAgent:
         }
         if context["feedback_errors"]:
             data["feedback_errors"] = pd.DataFrame(context["feedback_errors"])
+        long_table = context["df_long"]
+        unknown = long_table[long_table["question_type"] == "unknown"] if "question_type" in long_table else pd.DataFrame()
+        if not unknown.empty:
+            columns = [name for name in ("original_question", "mapping_status", "mapping_candidates") if name in unknown]
+            data["pending_review"] = unknown[columns].drop_duplicates()
         write_output_excel(str(output_path), data, include_empty_sheets=False)
         return {"report_path": str(output_path)}

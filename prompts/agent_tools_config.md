@@ -1,4 +1,4 @@
-﻿# Course Insight Agent 工具契约
+# Course Insight Agent 工具契约
 
 此文件描述当前 FastAPI 的真实输入与输出，供 Dify 或其他客户端配置。接口入口见 api/main_api.py；以服务 OpenAPI 为最终字段依据。
 
@@ -57,3 +57,9 @@
 complete 表示该次有效反馈分类没有记录失败；partial 表示有失败项，可查看其余结果和报告。该状态不等同于模型语义准确率。
 
 结果记录保存在 REPORT_OUTPUT_DIR（默认 data/output）的 analyses/ 子目录。必须与 Excel 一起保留；当前是实例本地存储、服务级鉴权。还没有个人账户隔离、跨实例共享或自动过期清理。
+
+## 批量完整分析（新增）
+
+POST /analysis/batch：multipart 的 files 为 1—10 份问卷，可选 mapping 为映射表，可选 enable_ai=true 启用模型；默认仅统计。该入口与网页共用服务，支持课程总结与跨期趋势。返回 analysis_id、result_url、download_url、data_quality_issues 和 ai_tables。后续同样按 analysis_id 复用结果。
+
+原 /analysis 和 /dify/analyze 保持单文件兼容范围。批量 AI 请求最多 100 条有效反馈、每条 2000 字符，上传合计不超过 10 MB。

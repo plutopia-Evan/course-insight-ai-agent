@@ -1,0 +1,3 @@
+{"id":"demo-1","items":[{"category":"讲师表现","subcategory":"讲解清晰","sentiment":"positive","evidence":"老师讲解清晰"}]}
+{"id":"demo-2","items":[{"category":"实操与案例","subcategory":"希望增加真实案例","sentiment":"suggestion","evidence":"希望增加真实案例"}]}
+{"id":"demo-3","items":[{"category":"课程节奏","subcategory":"节奏过快","sentiment":"negative","evidence":"课程节奏并不快，整体节奏合理"}]}

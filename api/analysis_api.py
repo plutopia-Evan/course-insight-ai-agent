@@ -16,6 +16,10 @@ router = APIRouter(tags=["analysis"])
 
 
 def convert_numpy(obj):
+    if obj is pd.NA or obj is pd.NaT:
+        return None
+    if isinstance(obj, np.bool_):
+        return bool(obj)
     if isinstance(obj, np.integer):
         return int(obj)
     if isinstance(obj, (np.floating, float)):

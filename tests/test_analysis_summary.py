@@ -38,6 +38,12 @@ def test_analysis_counts_match_report(tmp_path, monkeypatch):
 
     assert summary == {
         "analysis_status": "complete",
+        "data_quality_status": "needs_review",
+        "unknown_question_count": 0,
+        "classified_feedback_people": 2,
+        "feedback_eligible_count": 2,
+        "feedback_analyzed_rate": 1.0,
+        "feedback_skipped_rate": 0.0,
         "student_count": 2,
         "rating_total": 2,
         "valid_rating_count": 1,
