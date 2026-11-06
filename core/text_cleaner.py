@@ -131,7 +131,10 @@ def clean_text_feedback(text_df: pd.DataFrame) -> pd.DataFrame:
     """
     if text_df.empty:
         logger.info("文本反馈数据为空，跳过清洗")
-        return text_df
+        result = text_df.copy()
+        for name in ("feedback_clean", "feedback_label", "duplicate_count", "is_representative"):
+            result[name] = pd.Series(index=result.index, dtype=object)
+        return result
 
     df = text_df.copy()
 

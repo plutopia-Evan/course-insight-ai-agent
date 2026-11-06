@@ -12,6 +12,9 @@ import sys
 import logging
 import tempfile
 import shutil
+import hashlib
+from pathlib import Path
+from dotenv import load_dotenv
 from datetime import datetime
 from io import BytesIO
 
@@ -51,6 +54,10 @@ from core.output_writer import (
     build_feedback_frequency,
 )
 from scripts.ai_pipeline import run_ai_pipeline
+from core.batch_service import run_base_analysis, run_batch_analysis, run_feedback_analysis
+from core.examples import sample_uploads
+
+load_dotenv()
 
 
 st.set_page_config(
@@ -86,188 +93,11 @@ class StreamlitLogHandler(logging.Handler):
 
 
 def run_analysis(survey_files, mapping_file, temp_dir):
-    """执行完整的问卷分析流程。
-
-    Args:
-        survey_files: 上传的问卷文件列表 [(filename, bytes), ...]
-        mapping_file: 上传的题目映射 (filename, bytes)
-        temp_dir: 临时目录路径
-
-    Returns:
-        dict: 包含所有分析结果的字典
-    """
-    log_handler = StreamlitLogHandler()
-    logger = logging.getLogger()
-    logger.addHandler(log_handler)
-
-    progress_container = st.empty()
-    log_handler.placeholder = progress_container
-
+    progress = st.empty()
     try:
-        progress_container.info("正在保存上传文件...")
-        saved_survey_paths = []
-        for fname, fdata in survey_files:
-            save_path = os.path.join(temp_dir, fname)
-            with open(save_path, "wb") as f:
-                f.write(fdata)
-            saved_survey_paths.append(save_path)
-
-        config_path = os.path.join(temp_dir, mapping_file[0])
-        with open(config_path, "wb") as f:
-            f.write(mapping_file[1])
-
-        progress_container.info("正在加载题目映射配置...")
-        mapping_df = load_question_mapping(config_path)
-
-        all_long_tables = []
-        all_question_headers = []
-        file_course_sessions = []
-        all_anomalies = []
-        filename_issues = []
-
-        file_count = len(saved_survey_paths)
-        for i, filepath in enumerate(saved_survey_paths):
-            fname = os.path.basename(filepath)
-            progress_container.info(f"正在处理文件 ({i+1}/{file_count}): {fname}")
-            try:
-                cn, sn, df_raw, qh, mc = read_survey_file(filepath)
-                file_course_sessions.append((cn, sn, len(df_raw), len(qh)))
-                df_long = wide_to_long(df_raw, qh)
-                df_long = map_questions(df_long, mapping_df)
-                anomalies = detect_anomalies(df_long)
-                if not anomalies.empty:
-                    all_anomalies.append(anomalies)
-                all_long_tables.append(df_long)
-                all_question_headers.extend(qh)
-            except Exception as e:
-                filename_issues.append({"文件名": fname, "原因": f"处理异常: {e}"})
-                progress_container.warning(f"文件 {fname} 处理异常: {e}")
-                continue
-
-        if not all_long_tables:
-            progress_container.error("没有文件被成功处理")
-            return None
-
-        progress_container.info("正在合并数据...")
-        df_all_long = pd.concat(all_long_tables, ignore_index=True)
-        anomalies_combined = pd.concat(all_anomalies, ignore_index=True) if all_anomalies else pd.DataFrame()
-
-        progress_container.info("正在检测异常评分...")
-        valid_ratings = get_valid_ratings(df_all_long)
-        all_ratings = df_all_long[df_all_long["question_type"] == "rating"].copy()
-        _, text_df = split_rating_and_text(df_all_long)
-
-        progress_container.info("正在分类题目...")
-        auto_coverage_df, auto_category_map = compute_auto_coverage(df_all_long, mapping_df)
-        df_all_long, valid_ratings = apply_auto_category(df_all_long, valid_ratings, auto_category_map)
-        all_ratings["auto_category"] = all_ratings["standard_question"].map(auto_category_map)
-        all_ratings["auto_category"] = all_ratings["auto_category"].fillna("unknown")
-
-        all_course_sessions_data = df_all_long[["course_name", "session"]].drop_duplicates()
-        total_course_sessions = len(all_course_sessions_data)
-        unique_session_labels = df_all_long["session"].nunique()
-
-        question_coverage = classify_questions(mapping_df, all_question_headers)
-        file_identification = build_file_identification(saved_survey_paths, file_course_sessions)
-
-        progress_container.info("正在计算统计数据...")
-        global_stats = compute_global_common_stats(valid_ratings, all_ratings)
-        course_common_stats = compute_course_common_stats(valid_ratings, all_ratings)
-        period_specific_stats = compute_period_specific_stats(valid_ratings, all_ratings)
-        session_stats = compute_session_stats(valid_ratings, all_ratings)
-
-        progress_container.info("正在清洗文本反馈...")
-        cleaned_feedback = clean_text_feedback(text_df)
-        feedback_summary = generate_feedback_summary(cleaned_feedback)
-        feedback_overview = compute_feedback_overview(text_df, cleaned_feedback)
-        feedback_frequency = build_feedback_frequency(cleaned_feedback)
-
-        progress_container.info("正在生成数据总览...")
-        overview = compute_overview_stats(
-            valid_ratings, df_all_long, text_df, anomalies_combined, saved_survey_paths,
-            feedback_overview=feedback_overview,
-            total_course_sessions=total_course_sessions,
-            unique_session_labels=unique_session_labels,
-        )
-
-        progress_container.info("正在构建待确认列表...")
-        pending_review = build_pending_review(df_all_long, anomalies_combined, filename_issues,
-                                             auto_coverage_df=auto_coverage_df)
-
-        feedback_detail_cols = [
-            "course_name", "session", "学员编号",
-            "response_value", "feedback_clean", "feedback_label", "duplicate_count",
-        ]
-        feedback_detail = cleaned_feedback[[c for c in feedback_detail_cols if c in cleaned_feedback.columns]].copy()
-        feedback_detail.rename(columns={
-            "course_name": "课程名称",
-            "session": "期次",
-            "response_value": "原始反馈",
-            "feedback_clean": "清洗后反馈",
-            "feedback_label": "反馈类型",
-            "duplicate_count": "重复次数",
-        }, inplace=True)
-        feedback_detail["是否空白"] = feedback_detail["反馈类型"].apply(lambda x: "是" if x == "纯空白反馈" else "否")
-        feedback_detail["是否低信息"] = feedback_detail["反馈类型"].apply(lambda x: "是" if x == "低信息量反馈" else "否")
-
-        normalized_long = df_all_long.copy()
-        if "response_value" in normalized_long.columns:
-            normalized_long["response_value"] = normalized_long["response_value"].astype(str)
-        output_cols = [
-            "学员编号", "course_name", "session", "original_question",
-            "standard_question", "question_type", "max_score", "category", "response_value",
-        ]
-        normalized_long_output = normalized_long[[c for c in output_cols if c in normalized_long.columns]]
-
-        mapping_detail = mapping_df.copy()
-        if "max_score" in mapping_detail.columns:
-            mapping_detail["max_score"] = mapping_detail["max_score"].astype(str)
-
-        output_xlsx_path = os.path.join(temp_dir, "course_survey_analysis.xlsx")
-        output_data = {
-            "overview": overview,
-            "file_identification": file_identification,
-            "normalized_long": normalized_long_output,
-            "question_mapping_result": mapping_detail,
-            "question_coverage": question_coverage,
-            "auto_coverage": auto_coverage_df,
-            "global_common_stats": global_stats,
-            "course_common_stats": course_common_stats,
-            "period_specific_stats": period_specific_stats,
-            "session_stats": session_stats,
-            "feedback_summary": feedback_summary,
-            "feedback_frequency": feedback_frequency,
-            "feedback_detail": feedback_detail,
-            "anomalies": anomalies_combined,
-            "pending_review": pending_review,
-        }
-
-        progress_container.info("正在生成 Excel 报告...")
-        write_output_excel(output_xlsx_path, output_data)
-
-        progress_container.empty()
-
-        return {
-            "overview": overview,
-            "file_identification": file_identification,
-            "question_coverage": question_coverage,
-            "auto_coverage": auto_coverage_df,
-            "global_common_stats": global_stats,
-            "course_common_stats": course_common_stats,
-            "period_specific_stats": period_specific_stats,
-            "session_stats": session_stats,
-            "feedback_summary": feedback_summary,
-            "feedback_frequency": feedback_frequency,
-            "feedback_overview": feedback_overview,
-            "feedback_detail": feedback_detail,
-            "anomalies": anomalies_combined,
-            "pending_review": pending_review,
-            "output_xlsx_path": output_xlsx_path,
-            "total_course_sessions": total_course_sessions,
-            "unique_session_labels": unique_session_labels,
-        }
+        return run_base_analysis(survey_files, mapping_file, temp_dir, progress=progress.info)
     finally:
-        logger.removeHandler(log_handler)
+        progress.empty()
 
 
 def main():
@@ -277,8 +107,8 @@ def main():
     st.sidebar.header("📋 使用说明")
     st.sidebar.markdown("""
     1. 上传问卷 Excel 文件（可多选）
-    2. 上传题目映射配置文件
-    3. 点击"开始分析"
+    2. 使用内置映射或上传自定义映射
+    3. 选择是否做 AI，点击“生成课程复盘”
     4. 查看分析结果
     5. 下载完整报告
 
@@ -299,11 +129,25 @@ def main():
         )
     with col2:
         uploaded_mapping = st.file_uploader(
-            "📁 上传题目映射配置",
+            "📁 自定义题目映射（可选）",
             type=["xlsx"],
             accept_multiple_files=False,
             help="上传 question_mapping.xlsx",
         )
+
+    default_mapping = Path("config/question_mapping.xlsx").read_bytes()
+    st.download_button("下载题目映射模板", default_mapping, file_name="question_mapping.xlsx")
+    if uploaded_mapping is None:
+        st.caption("当前使用内置题目映射；新题目会进入人工待确认列表。")
+    use_example = st.checkbox("使用合成示例数据体验")
+    if use_example:
+        uploaded_surveys = sample_uploads()
+        st.info("当前为合成演示问卷，不代表真实课程效果或模型准确率。")
+    configured_ai = all(os.getenv(key) for key in ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL"))
+    run_ai_now = st.checkbox("本次同时分析文字反馈", value=False, disabled=not configured_ai,
+                             help="勾选后一次完成基础统计与 AI 分析，会调用模型服务。")
+    if not configured_ai:
+        st.caption("服务尚未配置 AI，仍可生成基础统计报告。")
 
     if "analysis_done" not in st.session_state:
         st.session_state.analysis_done = False
@@ -332,14 +176,27 @@ def main():
         st.session_state.base_results = st.session_state.results
         st.session_state.base_xlsx_bytes = st.session_state.xlsx_bytes
 
-    can_analyze = uploaded_surveys and uploaded_mapping
+    can_analyze = bool(uploaded_surveys)
+    if uploaded_surveys:
+        parts = [(file.name, file.getvalue()) for file in uploaded_surveys]
+        mapping_bytes = uploaded_mapping.getvalue() if uploaded_mapping else default_mapping
+        fingerprint = hashlib.sha256(mapping_bytes + b"".join(name.encode("utf-8") + data for name, data in parts)).hexdigest()
+        if st.session_state.get("input_fingerprint") != fingerprint:
+            for name in ("analysis_done", "base_analysis_done", "ai_analysis_done"):
+                st.session_state[name] = False
+            for name in ("results", "base_results", "ai_results", "xlsx_bytes", "base_xlsx_bytes", "complete_xlsx_bytes"):
+                st.session_state[name] = None
+            st.session_state.input_fingerprint = fingerprint
+    elif st.session_state.get("input_fingerprint"):
+        for name in ("analysis_done", "base_analysis_done", "ai_analysis_done"):
+            st.session_state[name] = False
+        for name in ("results", "base_results", "ai_results", "xlsx_bytes", "base_xlsx_bytes", "complete_xlsx_bytes"):
+            st.session_state[name] = None
+        st.session_state.input_fingerprint = None
 
-    if st.button("🚀 开始分析", type="primary", disabled=not can_analyze, use_container_width=True):
+    if st.button("🚀 生成课程复盘", type="primary", disabled=not can_analyze, use_container_width=True):
         if not uploaded_surveys:
             st.error("请先上传问卷文件")
-            return
-        if not uploaded_mapping:
-            st.error("请先上传题目映射配置")
             return
 
         survey_names = [f.name for f in uploaded_surveys]
@@ -351,11 +208,11 @@ def main():
 
         temp_dir = tempfile.mkdtemp(prefix="survey_analysis_")
         try:
-            survey_files = [(f.name, f.read()) for f in uploaded_surveys]
-            mapping_file = (uploaded_mapping.name, uploaded_mapping.read())
+            survey_files = [(f.name, f.getvalue()) for f in uploaded_surveys]
+            mapping_file = (uploaded_mapping.name, uploaded_mapping.getvalue()) if uploaded_mapping else ("question_mapping.xlsx", default_mapping)
 
             with st.spinner("正在分析中，请稍候..."):
-                results = run_analysis(survey_files, mapping_file, temp_dir)
+                results = run_batch_analysis(survey_files, mapping_file, temp_dir, enable_ai=run_ai_now)
 
             if results is None:
                 st.error("分析失败，请检查上传文件格式是否正确")
@@ -369,9 +226,9 @@ def main():
             st.session_state.base_analysis_done = True
             st.session_state.base_results = results
             st.session_state.base_xlsx_bytes = st.session_state.xlsx_bytes
-            st.session_state.ai_analysis_done = False
-            st.session_state.ai_results = None
-            st.session_state.complete_xlsx_bytes = None
+            st.session_state.ai_analysis_done = run_ai_now
+            st.session_state.ai_results = results.get("ai_results")
+            st.session_state.complete_xlsx_bytes = results["complete_xlsx_bytes"] if run_ai_now else None
 
         except Exception as e:
             st.error(f"分析过程出错: {e}")
@@ -388,6 +245,12 @@ def main():
 
         st.divider()
         st.header("📈 分析结果概览")
+        pending = results.get("pending_review")
+        if pending is not None and not pending.empty:
+            st.warning(f"有 {len(pending)} 项数据需要人工确认，请先查看再使用结论。")
+            with st.expander("查看人工待确认项", expanded=True):
+                st.dataframe(pending, use_container_width=True)
+        st.caption("反馈标签占比以成功分类的去重反馈学员为分母；不等于全班满意度。优先级仍需结合样本量、严重程度和整改成本人工判断。")
 
         overview = results["overview"]
         overview_dict = dict(zip(overview["指标"], overview["数值"]))
@@ -433,12 +296,7 @@ def main():
         feedback_detail = results.get("feedback_detail")
         has_feedback = feedback_detail is not None and not feedback_detail.empty
 
-        enable_ai = st.checkbox(
-            "启用AI开放式反馈分析",
-            value=False,
-            help="启用后会调用DeepSeek API，可能产生费用",
-            disabled=not has_feedback,
-        )
+        enable_ai = configured_ai and not st.session_state.ai_analysis_done
 
         if not has_feedback:
             st.info("当前数据中无开放式反馈，无法启用AI分析")
@@ -567,100 +425,26 @@ def main():
 
 
 def _run_ai_analysis():
-    """执行 AI 分析管线（在按钮回调中调用）。"""
-    feedback_detail = st.session_state.base_results.get("feedback_detail")
-    if feedback_detail is None or feedback_detail.empty:
-        st.warning("无可用的开放式反馈数据")
-        return
-
-    progress_placeholder = st.empty()
-    status_placeholder = st.empty()
-    progress_bar = st.progress(0)
-    metric_cols = st.columns(5)
-
-    def progress_callback(info):
-        stage = info.get("stage", "")
-        if stage == "classification":
-            current = info.get("current", 0)
-            total = info.get("total", 1)
-            fraction = min(current / total, 1.0)
-            progress_bar.progress(fraction)
-            status_placeholder.text(f"正在分类: {current}/{total}")
-            metric_cols[0].metric("阶段", "分类")
-            metric_cols[1].metric("完成/总数", f"{current}/{total}")
-            metric_cols[2].metric("缓存命中", info.get("cache_hits", 0))
-            metric_cols[3].metric("API调用", info.get("api_calls", 0))
-            metric_cols[4].metric("失败", info.get("failures", 0))
-        elif stage == "statistics":
-            status_placeholder.text("正在生成统计数据...")
-            metric_cols[0].metric("阶段", "统计")
-        elif stage == "summary":
-            status_placeholder.text("正在生成课程总结...")
-            metric_cols[0].metric("阶段", "总结")
-
     try:
-        with st.spinner("AI分析进行中，请稍候..."):
-            ai_results = run_ai_pipeline(
-                feedback_detail_df=feedback_detail,
-                use_cache=True,
-                progress_callback=progress_callback,
+        with st.spinner("正在分析文字反馈并生成报告..."):
+            ai, report = run_feedback_analysis(
+                st.session_state.base_results["feedback_detail"],
+                st.session_state.base_xlsx_bytes,
             )
-
-        st.session_state.ai_results = ai_results
+        st.session_state.ai_results = ai
+        st.session_state.complete_xlsx_bytes = report
         st.session_state.ai_analysis_done = True
-
-        # Generate combined Excel
-        try:
-            base_bytes = st.session_state.base_xlsx_bytes
-            if base_bytes:
-                from io import BytesIO
-                combined = BytesIO()
-                with pd.ExcelWriter(combined, engine="openpyxl") as writer:
-                    # Write base sheets from the base Excel
-                    base_xl = pd.ExcelFile(BytesIO(base_bytes))
-                    for sheet in base_xl.sheet_names:
-                        base_xl.parse(sheet).to_excel(writer, sheet_name=sheet, index=False)
-                    # Append AI sheets
-                    ai_sheet_map = [
-                        ("AI反馈分类明细", "classification_detail"),
-                        ("AI标签统计", "label_stats"),
-                        ("AI正向评价", "positive_summary"),
-                        ("AI负向问题", "negative_summary"),
-                        ("AI改进建议", "suggestion_summary"),
-                        ("课程期次反馈概览(AI)", "course_overview"),
-                        ("课程AI总结", "course_summary"),
-                        ("课程AI总结明细", "course_summary_detail"),
-                        ("跨期趋势总结", "trend_summary"),
-                        ("AI调用汇总", "api_summary"),
-                    ]
-                    for sheet_name, key in ai_sheet_map:
-                        df = ai_results.get(key)
-                        if df is not None and not df.empty:
-                            df.to_excel(writer, sheet_name=sheet_name, index=False)
-                    # Errors
-                    err_df = ai_results.get("errors")
-                    if err_df is not None and not err_df.empty:
-                        err_df.to_excel(writer, sheet_name="AI错误记录", index=False)
-                combined.seek(0)
-                st.session_state.complete_xlsx_bytes = combined.getvalue()
-
-        except Exception as e:
-            st.warning(f"合并Excel时出错: {e}，基础报告仍可下载")
-
-        progress_bar.progress(1.0)
-        if ai_results.get("errors") is not None and not ai_results["errors"].empty:
-            status_placeholder.text("AI分析结束，存在未完成项目，请查看 AI 错误记录")
-        else:
-            status_placeholder.text("AI分析完成！")
-        progress_placeholder.empty()
-
-    except Exception as e:
-        st.warning(f"AI分析过程出错: {e}，基础分析结果不受影响")
-        import traceback
-        st.code(traceback.format_exc())
+        st.rerun()
+    except Exception as exc:
+        st.error(f"AI 分析未完成，基础报告仍可下载：{exc}")
 
 
 def _render_ai_tabs(ai_results):
+    review = ai_results.get("review_plan")
+    if review is not None and not review.empty:
+        with st.expander("建议人工审核：确认严重程度、整改成本和负责人"):
+            st.dataframe(review, use_container_width=True)
+            st.caption("可下载报告，在“建议人工审核”工作表中填写决策；频率排序不会自动替代人工决策。")
     """渲染 AI 分析结果标签页。"""
     tabs = st.tabs([
         "AI反馈分类明细",

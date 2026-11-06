@@ -17,6 +17,8 @@ from typing import Dict, List, Tuple, Optional, Any
 
 import pandas as pd
 import openpyxl
+from zipfile import BadZipFile
+from core.input_validation import SurveyInputError, validate_mapping, detect_metadata_columns, match_question
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +33,15 @@ def load_question_mapping(config_path: str) -> pd.DataFrame:
         包含列 [original_question, standard_question, question_type, max_score, category] 的 DataFrame
     """
     logger.info("加载题目映射配置: %s", config_path)
-    df = pd.read_excel(config_path, engine="openpyxl")
+    try:
+        df = pd.read_excel(config_path, engine="openpyxl")
+    except (ValueError, OSError, BadZipFile) as exc:
+        raise SurveyInputError("无法读取题目映射表，请确认是有效的 Excel 工作簿") from exc
     required_cols = {"original_question", "standard_question", "question_type", "max_score", "category"}
     missing = required_cols - set(df.columns)
     if missing:
-        raise ValueError(f"question_mapping.xlsx 缺少必要列: {missing}")
-    df["max_score"] = df["max_score"].astype("Int64")
+        raise SurveyInputError(f"question_mapping.xlsx 缺少必要列: {missing}")
+    df = validate_mapping(df)
     logger.info("题目映射加载完成，共 %d 条映射记录", len(df))
     return df
 
@@ -67,37 +72,7 @@ def parse_filename(filename: str) -> Tuple[str, str]:
 
 
 def detect_question_column_indices(headers: List[str]) -> Tuple[int, int, List[int]]:
-    """识别问卷表头中的学员编号列、提交时间列和题目列。
-
-    学员编号列: 包含 '学员' 或 '编号' 或 'ID'（不区分大小写）
-    提交时间列: 包含 '提交' 或 '时间' 或 '日期'
-    题目列: 其余列
-
-    Args:
-        headers: 表头列表
-
-    Returns:
-        (student_id_idx, submit_time_idx, question_indices)
-    """
-    student_id_idx = None
-    submit_time_idx = None
-    question_indices = []
-
-    for i, h in enumerate(headers):
-        h_str = str(h).strip()
-        if student_id_idx is None and ("学员" in h_str or "编号" in h_str or h_str.upper() == "ID"):
-            student_id_idx = i
-        elif submit_time_idx is None and ("提交" in h_str or "时间" in h_str or "日期" in h_str):
-            submit_time_idx = i
-        else:
-            question_indices.append(i)
-
-    if student_id_idx is None:
-        student_id_idx = 0
-    if submit_time_idx is not None:
-        question_indices = [i for i in question_indices if i != student_id_idx]
-
-    return student_id_idx, submit_time_idx, question_indices
+    return detect_metadata_columns(headers)
 
 
 def read_survey_file(filepath: str) -> Tuple[str, str, pd.DataFrame, List[str], List[str]]:
@@ -110,7 +85,10 @@ def read_survey_file(filepath: str) -> Tuple[str, str, pd.DataFrame, List[str], 
         (course_name, session, df_raw, question_headers, metadata_headers)
     """
     logger.info("读取文件: %s", filepath)
-    df = pd.read_excel(filepath, engine="openpyxl")
+    try:
+        df = pd.read_excel(filepath, engine="openpyxl", dtype=object)
+    except (ValueError, OSError, BadZipFile) as exc:
+        raise SurveyInputError("无法读取问卷，请确认文件是有效的 Excel 工作簿") from exc
 
     filename = os.path.basename(filepath)
     course_name, session = parse_filename(filename)
@@ -121,6 +99,13 @@ def read_survey_file(filepath: str) -> Tuple[str, str, pd.DataFrame, List[str], 
     id_col_name = df.columns[student_id_idx]
     meta_cols.append(id_col_name)
     df.rename(columns={id_col_name: "学员编号"}, inplace=True)
+    if df.empty:
+        raise SurveyInputError("问卷没有答卷记录")
+    if df["学员编号"].isna().any() or df["学员编号"].astype(str).str.strip().eq("").any():
+        raise SurveyInputError("学员编号存在空值，请先补齐或移除无效答卷")
+    df["学员编号"] = df["学员编号"].astype(str).str.strip()
+    if df["学员编号"].duplicated().any():
+        raise SurveyInputError("同一文件存在重复学员编号，请先确认每位学员保留哪份答卷")
 
     time_col_name = None
     if submit_time_idx is not None:
@@ -167,55 +152,12 @@ def wide_to_long(df: pd.DataFrame, question_headers: List[str]) -> pd.DataFrame:
 
 
 def map_questions(df_long: pd.DataFrame, mapping_df: pd.DataFrame) -> pd.DataFrame:
-    """将原始题目映射为标准题目。
-
-    匹配规则:
-    1. 首先尝试精确匹配 original_question
-    2. 如果未匹配，尝试模糊匹配（原始题目包含映射表中的关键词）
-
-    Args:
-        df_long: 长表 DataFrame
-        mapping_df: 题目映射 DataFrame
-
-    Returns:
-        添加了 standard_question, question_type, max_score, category 列的长表
-    """
-    mapping_lookup = mapping_df.set_index("original_question")
-
-    def _match_question(orig_q: str) -> Optional[Dict[str, Any]]:
-        orig_q_str = str(orig_q).strip()
-        if orig_q_str in mapping_lookup.index:
-            row = mapping_lookup.loc[orig_q_str]
-            return {
-                "standard_question": row["standard_question"],
-                "question_type": row["question_type"],
-                "max_score": row["max_score"],
-                "category": row["category"],
-            }
-        matched_rows = mapping_df[mapping_df["original_question"].apply(lambda k: str(k).strip() in orig_q_str or orig_q_str in str(k).strip())]
-        if not matched_rows.empty:
-            row = matched_rows.iloc[0]
-            logger.debug("模糊匹配: '%s' -> '%s'", orig_q_str, row["original_question"])
-            return {
-                "standard_question": row["standard_question"],
-                "question_type": row["question_type"],
-                "max_score": row["max_score"],
-                "category": row["category"],
-            }
-        return None
-
-    results = df_long["original_question"].apply(_match_question)
-    df_long["standard_question"] = results.apply(lambda r: r["standard_question"] if r else None)
-    df_long["question_type"] = results.apply(lambda r: r["question_type"] if r else "unknown")
-    df_long["max_score"] = results.apply(lambda r: r["max_score"] if r else pd.NA)
-    df_long["category"] = results.apply(lambda r: r["category"] if r else "unknown")
-
-    unmatched = df_long[df_long["question_type"] == "unknown"]["original_question"].unique()
-    if len(unmatched) > 0:
-        logger.warning("未能映射的题目: %s", unmatched.tolist())
-
-    logger.info("题目映射完成，匹配率: %.1f%%",
-                (df_long["question_type"] != "unknown").mean() * 100)
+    mapping = validate_mapping(mapping_df)
+    df_long = df_long.copy()
+    matches = [match_question(question, mapping) for question in df_long["original_question"]]
+    mapped = pd.DataFrame(matches, index=df_long.index)
+    for name in ("standard_question", "question_type", "max_score", "category", "mapping_status", "mapping_candidates"):
+        df_long[name] = mapped[name] if not mapped.empty else pd.Series(index=df_long.index, dtype=object)
     return df_long
 
 
@@ -487,6 +429,8 @@ def compute_auto_coverage(df_all_long: pd.DataFrame, mapping_df: pd.DataFrame) -
         auto_category_map[std_q] = auto_cat
 
     result = pd.DataFrame(records)
+    if result.empty:
+        result = pd.DataFrame(columns=["standard_question", "question_type", "配置category", "自动分类", "配置与自动是否一致"])
     logger.info("自动覆盖分析完成: %d 个标准题目", len(result))
     logger.info("  global_common: %d, course_common: %d, period_specific: %d, feedback: %d",
                 (result["自动分类"] == "global_common").sum(),

@@ -21,6 +21,7 @@ from typing import Dict, List, Optional, Tuple
 import yaml
 import pandas as pd
 from openai import OpenAI
+from llm.usage import observed_completion
 from pydantic import BaseModel, ValidationError, field_validator
 
 logger = logging.getLogger(__name__)
@@ -364,8 +365,8 @@ def deepseek_analyze_feedback(
                     f"请修正这些问题，并重新输出严格JSON。"
                 )
 
-            client = OpenAI(api_key=api_key, base_url=base_url)
-            response = client.chat.completions.create(
+            client = OpenAI(api_key=api_key, base_url=base_url, max_retries=0)
+            response = observed_completion(client, stage="classification",
                 model=model,
                 messages=[
                     {"role": "system", "content": system_prompt},

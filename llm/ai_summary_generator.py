@@ -23,6 +23,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import yaml
 from openai import OpenAI
+from llm.usage import observed_completion
 from pydantic import BaseModel, ValidationError, field_validator
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -310,10 +311,10 @@ def _call_llm(input_data: dict, system_prompt: str,
             if attempt > 1 and last_error:
                 user_content = f"{input_json}\n\n上一次输出存在以下错误：\n{last_error}\n请修正后重新输出严格JSON。"
 
-            client = OpenAI(api_key=api_key, base_url=base_url)
+            client = OpenAI(api_key=api_key, base_url=base_url, max_retries=0)
             meta["_api_called"] += 1
 
-            resp = client.chat.completions.create(
+            resp = observed_completion(client, stage="summary",
                 model=model,
                 messages=[
                     {"role": "system", "content": system_prompt},
