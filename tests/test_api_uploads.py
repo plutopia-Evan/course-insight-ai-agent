@@ -146,6 +146,9 @@ def test_dify_endpoint_returns_summary_without_name_error(monkeypatch, tmp_path)
             path = Path(file_path)
             assert path.read_bytes() == b"survey"
             uploaded_paths.append(path)
+            report = Path("data/output/report.xlsx")
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_bytes(b"test-report")
             return {
                 "summary": {
                     "analysis_status": "partial",

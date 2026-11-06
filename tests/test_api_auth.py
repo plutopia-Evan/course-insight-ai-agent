@@ -10,6 +10,7 @@ from api.main_api import app
 
 PROTECTED_PATHS = {
     "/analysis",
+    "/analyses/{analysis_id}",
     "/feedback_analysis",
     "/generate_report",
     "/dify/analyze",

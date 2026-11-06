@@ -1,3 +1,5 @@
+> 历史讨论记录：本文件保留早期方案与对话，不作为当前工具配置依据。
+> 当前契约请看 [prompts/agent_tools_config.md](prompts/agent_tools_config.md)。一次 /analysis 已包含反馈分类与报告，后续使用 analysis_id 复用；不要按旧示例连续执行三个全量处理工具。
 
 
 星期六 22:30
@@ -4277,4 +4279,3 @@ Course Insight Agent
 \-   分析课程问题原因：调用 feedback\_analysis。
 
 \-   生成课程报告：调用 report\_generation。
-

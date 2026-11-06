@@ -1,226 +1,56 @@
+"""Upload once, then retrieve the existing analysis by its stable ID."""
+
+import math
 from datetime import datetime, date
 
-from fastapi import APIRouter, UploadFile, File
-from fastapi.responses import JSONResponse
-
-import os
 import numpy as np
 import pandas as pd
-
+from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi.responses import JSONResponse
 
 from api.analysis_runner import analyze_upload
+from core.analysis_results import analysis_payload, load_analysis_result
 
 
-router = APIRouter(
-    tags=["analysis"]
-)
+router = APIRouter(tags=["analysis"])
 
-
-# ===============================
-# numpy / pandas JSON转换
-# ===============================
 
 def convert_numpy(obj):
-
-    import math
-
-
     if isinstance(obj, np.integer):
         return int(obj)
-
-
-    elif isinstance(obj, np.floating):
-
+    if isinstance(obj, (np.floating, float)):
         value = float(obj)
-
-        if math.isnan(value) or math.isinf(value):
-            return None
-
-        return value
-
-
-    elif isinstance(obj, float):
-
-        if math.isnan(obj) or math.isinf(obj):
-            return None
-
-        return obj
-
-
-    elif isinstance(obj, np.ndarray):
-
-        return [
-            convert_numpy(x)
-            for x in obj.tolist()
-        ]
-
-
-    elif isinstance(obj, pd.DataFrame):
-
-        return [
-            convert_numpy(row)
-            for row in obj.to_dict(
-                orient="records"
-            )
-        ]
-
-
-    elif isinstance(obj, pd.Series):
-
-        return [
-            convert_numpy(x)
-            for x in obj.tolist()
-        ]
-
-
-    elif isinstance(obj, pd.Timestamp):
-
+        return None if math.isnan(value) or math.isinf(value) else value
+    if isinstance(obj, np.ndarray):
+        return [convert_numpy(x) for x in obj.tolist()]
+    if isinstance(obj, pd.DataFrame):
+        return [convert_numpy(row) for row in obj.to_dict(orient="records")]
+    if isinstance(obj, pd.Series):
+        return [convert_numpy(x) for x in obj.tolist()]
+    if isinstance(obj, (pd.Timestamp, datetime, date)):
         return obj.isoformat()
-
-
-    elif isinstance(obj, (datetime,date)):
-
-        return obj.isoformat()
-
-
-    elif isinstance(obj, dict):
-
-        return {
-            k:convert_numpy(v)
-            for k,v in obj.items()
-        }
-
-
-    elif isinstance(obj,list):
-
-        return [
-            convert_numpy(x)
-            for x in obj
-        ]
-
-
-    else:
-
-        return obj
-
-
-
-# ===============================
-# 文件上传分析接口
-# ===============================
+    if isinstance(obj, dict):
+        return {key: convert_numpy(value) for key, value in obj.items()}
+    if isinstance(obj, list):
+        return [convert_numpy(value) for value in obj]
+    return obj
 
 
 @router.post("/analysis")
-async def analysis(
-        file: UploadFile = File(...)
-):
-
-
-    # ==========================
-    # 1. 保存上传文件
-    # ==========================
-
+async def analysis(file: UploadFile = File(...)):
     result = await analyze_upload(file)
-
-
-
-    # ==========================
-    # 3. 返回结果
-    # ==========================
-
-
     response = {
-
-        "status": result["analysis_status"],
-
-        "feedback_analyzed_count": result["feedback_analyzed_count"],
-
-        "feedback_failed_count": result["feedback_failed_count"],
-
-        "feedback_skipped_count": result["feedback_skipped_count"],
-
-        "feedback_response_count": result["feedback_response_count"],
-
-        "feedback_item_count": result["feedback_item_count"],
-
-        "feedback_errors": result["feedback_errors"],
-
-        "download_url": f"/download/{os.path.basename(result['report_path'])}",
-
-
-        "course_name":
-            result.get(
-                "course_name",
-                ""
-            ),
-
-
-        "session":
-            result.get(
-                "session",
-                ""
-            ),
-
-
-        "student_count":
-            result.get(
-                "student_count",
-                0
-            ),
-
-
-        "rating_total":
-            result.get(
-                "rating_total",
-                0
-            ),
-
-
-        "valid_rating_count":
-            result.get(
-                "valid_rating_count",
-                0
-            ),
-
-
-        "feedback_count":
-            result.get(
-                "feedback_count",
-                0
-            ),
-
-
-        "anomaly_count":
-            result.get(
-                "anomaly_count",
-                0
-            ),
-
-
-        "normalized_long":
-            result.get(
-                "df_long",
-                []
-            ),
-
-
-        "anomalies":
-            result.get(
-                "anomalies",
-                []
-            ),
-
-
-        "feedback_results":
-            result.get(
-                "feedback_results",
-                []
-            )
-
+        **analysis_payload(result),
+        "normalized_long": result.get("df_long", []),
+        "anomalies": result.get("anomalies", []),
     }
+    return JSONResponse(content=convert_numpy(response))
 
 
-
-    return JSONResponse(
-        content=convert_numpy(response)
-    )
+@router.get("/analyses/{analysis_id}")
+def get_analysis(analysis_id: str):
+    """Return stored counts, feedback and download URL without new model calls."""
+    try:
+        return load_analysis_result(analysis_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

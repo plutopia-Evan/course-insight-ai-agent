@@ -1,14 +1,1 @@
-用于分析课程问卷Excel文件。
-
-当用户上传课程问卷，需要获取：
-- 学员人数
-- 平均评分
-- 有效评分数量
-- 异常数据数量
-时调用。
-
-输入：
-file_path
-
-输出：
-课程基础统计指标。
+﻿首次分析工具：POST /analysis，multipart 字段 file 上传问卷。返回 analysis_id、result_url、download_url、统计与反馈。该调用已经生成报告。完整配置见 prompts/agent_tools_config.md。

@@ -7,14 +7,17 @@ from agent.orchestrator import CourseInsightAgent
 from agent.feedback_agent import FeedbackLimitExceeded
 from api.request_limits import MAX_FEEDBACK_CHARS, MAX_FEEDBACK_ITEMS
 from api.upload_storage import saved_upload
+from core.analysis_results import save_analysis_result
 
 
 def _analyze_path(file_path: str) -> dict:
-    return CourseInsightAgent().run(
+    result = CourseInsightAgent().run(
         file_path,
         max_feedback_count=MAX_FEEDBACK_ITEMS,
         max_feedback_chars=MAX_FEEDBACK_CHARS,
     )
+    result.update(save_analysis_result(result))
+    return result
 
 
 async def analyze_upload(file: UploadFile) -> dict:
