@@ -11,6 +11,7 @@ from api.main_api import app
 PROTECTED_PATHS = {
     "/analysis",
     "/analysis/batch",
+    "/analysis/summary",
     "/analyses/{analysis_id}",
     "/feedback_analysis",
     "/generate_report",
