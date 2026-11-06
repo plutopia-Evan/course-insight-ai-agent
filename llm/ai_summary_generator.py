@@ -634,6 +634,7 @@ def generate_summaries(
     output_path: str = "data/output/ai_course_summary.xlsx",
     limit: Optional[int] = None,
     use_cache: bool = True,
+    include_trends: bool = True,
 ):
     start_time = datetime.now()
 
@@ -688,7 +689,7 @@ def generate_summaries(
     # ---- 跨期趋势 ----
     trend_results = []
     trend_errors = []
-    courses = overview["course_name"].unique()
+    courses = overview["course_name"].unique() if include_trends else []
 
     for course in courses:
         course_sessions = overview[overview["course_name"] == course].copy()

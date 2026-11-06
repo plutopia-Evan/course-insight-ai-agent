@@ -2,8 +2,6 @@
 
 import json
 import tempfile
-import base64
-import hashlib
 from pathlib import Path
 from typing import Annotated
 
@@ -15,10 +13,10 @@ from core.batch_service import run_batch_analysis
 from core.input_validation import SurveyInputError
 from core.analysis_results import save_analysis_result
 from core.report_storage import new_report_path
+from core.report_delivery import attach_report_copy, MAX_INLINE_REPORT_BYTES
 
 
 router = APIRouter(tags=["batch"])
-MAX_INLINE_REPORT_BYTES = 8 * 1024 * 1024
 
 
 def records(frame):
@@ -52,21 +50,7 @@ def analyze_batch_files(files, mapping, enable_ai, include_report=False):
             "ai_tables": {name: records(frame) for name, frame in (ai or {}).items()},
         }
         payload = save_analysis_result(context)
-        # Send a bounded report copy to the authorized client, not into the manifest.
-        if include_report:
-            content = result["complete_xlsx_bytes"]
-            if len(content) <= MAX_INLINE_REPORT_BYTES:
-                payload["report_file"] = {
-                    "filename": path.name,
-                    "content_base64": base64.b64encode(content).decode("ascii"),
-                    "size_bytes": len(content),
-                    "sha256": hashlib.sha256(content).hexdigest(),
-                }
-                payload["report_delivery"] = "inline_and_link"
-            else:
-                payload["report_delivery"] = "link_only"
-                payload["report_inline_reason"] = "size_limit"
-        return payload
+        return attach_report_copy(payload, path.name, result["complete_xlsx_bytes"], include_report, MAX_INLINE_REPORT_BYTES)
 
 
 @router.post("/analysis/batch")

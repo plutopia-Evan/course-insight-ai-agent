@@ -6,6 +6,7 @@ from api.feedback_api import router as feedback_router
 from api.report_api import router as report_router
 from api.batch_api import router as batch_router
 from api.web_ui import router as web_router
+from api.summary_api import router as summary_router
 
 
 app = FastAPI(
@@ -28,5 +29,5 @@ def root():
     }
 
 
-for protected_router in (analysis_router, feedback_router, report_router, batch_router):
+for protected_router in (analysis_router, feedback_router, report_router, batch_router, summary_router):
     app.include_router(protected_router, dependencies=[Depends(require_service_token)])

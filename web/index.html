@@ -23,7 +23,13 @@
 <details><summary>自定义题目映射（可选）</summary><label for="mapping">映射配置 Excel</label><input id="mapping" type="file" accept=".xlsx"><p class="note">不上传则使用内置映射；未知或有歧义的题目会进入待确认列表。</p></details>
 <label class="check"><input id="ai" type="checkbox"><span>同时分析文字反馈<span class="note" style="display:block">需要服务端已配置模型，会产生模型调用；不勾选也能获得基础统计。</span></span></label>
 <button id="analyze" class="primary" type="submit">生成课程复盘</button>
-</form></section>
+</form>
+<details><summary>已有分类结果？只重生成课程总结</summary>
+<p class="note">上传含“AI反馈分类明细”的报告，最多 500 条意见、6 个课程期次。只重新计算统计和生成总结，不重新分类，也不重复生成跨期趋势。</p>
+<label for="replay-file">已保存的分类报告</label><input id="replay-file" type="file" accept=".xlsx">
+<label class="check"><input id="fresh-summary" type="checkbox"><span>重新调用模型，跳过总结缓存</span></label>
+<button id="replay-summary" type="button">仅重生成总结</button><p class="note">仍使用上方访问令牌，会产生总结模型调用；格式校验不等于验证上传分类的业务真实性。</p>
+</details></section>
 <aside class="card"><h2><span class="step">02</span>如何使用结果</h2><ol class="instructions"><li>先核对课程、期次与有效样本，处理未映射题目和异常记录。</li><li>启用 AI 后，查看独立意见、标签和原文证据，再阅读课程总结。</li><li>结合问题严重程度与整改成本，人工确认哪些建议应当采纳。</li></ol><p class="note">标签占比的分母是成功分类的反馈学员，不等于全班满意度。首次请求或较大批次可能需要较长时间。</p><hr>
 <h3>查看已有分析</h3><label for="analysis-id">分析编号</label><input id="analysis-id" type="text" autocomplete="off" placeholder="粘贴之前保存的分析编号"><div class="actions"><button id="lookup" type="button">查看已有结果</button></div><p class="note">优先读取本页已授权的副本；其他分析需要访问令牌。查询和下载不重新调用模型。</p></aside>
 </div>
@@ -83,7 +89,8 @@ function show(data){
   const remembered=remember(data);data=remembered.data;reportCopy=remembered.copy;
   result=data;$('result').hidden=false;$('analysis-id').value=data.analysis_id||'';
   $('report-copy-note').textContent=reportCopy?'报告副本已保留在当前页面，服务器文件失效时仍可下载。刷新或关闭页面前请保存。':data.report_inline_reason==='size_limit'?'报告超过页面副本大小限制，请尽快下载保存。':'当前仅有服务器报告链接，请尽快下载保存。';
-  $('result-mode').textContent=data.profile==='batch_ai'?'基础统计 + AI 分析':'基础统计';
+  $('result-mode').textContent=data.profile==='summary_replay'?'仅重生成课程总结':data.profile==='batch_ai'?'基础统计 + AI 分析':'基础统计';
+  $('download').textContent=data.profile==='summary_replay'?'下载总结 Excel 报告':'下载完整 Excel 报告';
   $('result-id').textContent='分析编号：'+(data.analysis_id||'未返回');
   const metrics=[['课程期次数',data.course_session_count??1],['学员人次',data.student_count],['有效评分',data.valid_rating_count],['文字题回答',data.feedback_response_count]];
   $('metrics').replaceChildren();for(const [label,value] of metrics){const div=document.createElement('div');div.className='metric';const number=document.createElement('strong');number.textContent=value??'—';const text=document.createElement('span');text.textContent=label;div.append(number,text);$('metrics').append(div);}
@@ -114,6 +121,7 @@ $('analysis-form').addEventListener('submit',async event=>{
 $('lookup').addEventListener('click',async()=>{try{const id=$('analysis-id').value.trim();if(!/^[0-9a-f]{32}$/.test(id))throw new Error('请填写完整的分析编号。');if(snapshots.has(id)){show(snapshots.get(id).data);status('已读取本页保留的结果，不需要重新分析。','success');return;}const auth=headers();busy(true);clearResult();status('正在读取已有结果…');show(await (await request('/analyses/'+id,{headers:auth})).json());}catch(error){status(error.message,'error');}finally{busy(false);}});
 $('download').addEventListener('click',async()=>{try{if(!result)throw new Error('没有可用的报告。');busy(true);const local=Boolean(reportCopy);let blob=reportCopy;if(!blob){const auth=headers();if(!result.download_url?.startsWith('/download/'))throw new Error('没有可用的报告链接。');blob=await(await request(result.download_url,{headers:auth})).blob();}const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download='course-analysis-'+result.analysis_id+'.xlsx';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);status(local?'报告已下载（使用本页副本）。':'报告已下载。','success');}catch(error){status(error.message,'error');}finally{busy(false);}});
 $('table-select').addEventListener('change',drawTable);
+$('replay-summary').addEventListener('click',async()=>{try{const auth=headers();const file=$('replay-file').files[0];if(!file||!file.name.toLowerCase().endsWith('.xlsx'))throw new Error('请上传包含 AI反馈分类明细 的 Excel 报告。');if(file.size>10*1024*1024)throw new Error('报告文件不能超过 10 MB。');const fresh=$('fresh-summary').checked;busy(true);clearResult();status('正在复用已有分类结果，只重新生成课程总结…');const form=new FormData();form.append('file',file);form.append('include_report','true');form.append('use_cache',String(!fresh));show(await(await request('/analysis/summary',{method:'POST',headers:auth,body:form})).json());}catch(error){status(error.message||'总结生成失败，请查看输入和服务状态。','error');}finally{busy(false);}});
 </script>
 </body>
 </html>
