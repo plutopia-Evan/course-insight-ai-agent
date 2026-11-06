@@ -298,7 +298,8 @@ def _write_excel(
 def _write_df_to_sheet(ws, df: pd.DataFrame, pct_cols: List[str]):
     import numpy as np
 
-    if df is None or df.empty:
+    # Even an empty category must keep its columns for the summary reader.
+    if df is None or len(df.columns) == 0:
         ws.cell(row=1, column=1, value="暂无数据")
         return
 

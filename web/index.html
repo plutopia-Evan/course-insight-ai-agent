@@ -25,22 +25,39 @@
 <button id="analyze" class="primary" type="submit">生成课程复盘</button>
 </form></section>
 <aside class="card"><h2><span class="step">02</span>如何使用结果</h2><ol class="instructions"><li>先核对课程、期次与有效样本，处理未映射题目和异常记录。</li><li>启用 AI 后，查看独立意见、标签和原文证据，再阅读课程总结。</li><li>结合问题严重程度与整改成本，人工确认哪些建议应当采纳。</li></ol><p class="note">标签占比的分母是成功分类的反馈学员，不等于全班满意度。首次请求或较大批次可能需要较长时间。</p><hr>
-<h3>查看已有分析</h3><label for="analysis-id">分析编号</label><input id="analysis-id" type="text" autocomplete="off" placeholder="粘贴之前保存的分析编号"><div class="actions"><button id="lookup" type="button">查看已有结果</button></div><p class="note">使用相同访问令牌。查询和下载复用已有结果，不重新调用模型。</p></aside>
+<h3>查看已有分析</h3><label for="analysis-id">分析编号</label><input id="analysis-id" type="text" autocomplete="off" placeholder="粘贴之前保存的分析编号"><div class="actions"><button id="lookup" type="button">查看已有结果</button></div><p class="note">优先读取本页已授权的副本；其他分析需要访问令牌。查询和下载不重新调用模型。</p></aside>
 </div>
 <div id="status" class="status" role="status" aria-live="polite" hidden></div>
-<section id="result" class="card full" hidden><span id="result-mode" class="pill"></span><h2 style="margin-top:10px">本次复盘结果</h2><div id="metrics" class="metrics"></div><p id="result-id" class="note"></p><div class="actions"><button id="download" type="button">下载完整 Excel 报告</button></div><div id="warnings"></div><label for="table-select">查看分析明细</label><select id="table-select"></select><div id="table" class="table-wrap"></div></section>
-<footer>评分与人数由程序计算；AI 结果需要结合证据复核。请妥善保存报告，服务文件失效后需要重新分析。</footer>
+<section id="result" class="card full" hidden><span id="result-mode" class="pill"></span><h2 style="margin-top:10px">本次复盘结果</h2><div id="metrics" class="metrics"></div><p id="result-id" class="note"></p><div class="actions"><button id="download" type="button">下载完整 Excel 报告</button></div><p id="report-copy-note" class="note"></p><div id="warnings"></div><label for="table-select">查看分析明细</label><select id="table-select"></select><div id="table" class="table-wrap"></div></section>
+<footer>评分与人数由程序计算；AI 结果需要结合证据复核。本页最多临时保留最近 3 份结果，刷新或关闭后清除；请及时下载保存。</footer>
 </main>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
 let result = null;
 let tables = {};
+const snapshots = new Map();
+let reportCopy = null;
 const names = {classification_detail:'反馈分类明细',label_stats:'标签统计',positive_summary:'正向评价',negative_summary:'负向问题',suggestion_summary:'改进建议',course_overview:'课程期次概览',course_summary:'课程总结',course_summary_detail:'课程总结明细',trend_summary:'跨期趋势',review_plan:'建议人工审核',model_usage:'模型调用明细',api_summary:'调用汇总',errors:'AI 错误记录',data_quality_issues:'数据待确认项'};
 function status(text, kind=''){ $('status').hidden=false;$('status').textContent=text;$('status').className='status '+kind; }
 function headers(){ const token=$('token').value.trim();if(!token)throw new Error('请先输入访问令牌。');return {Authorization:'Bearer '+token}; }
 function busy(value){ document.querySelectorAll('input,button,select').forEach(el=>el.disabled=value); }
-function clearResult(){ result=null;tables={};$('result').hidden=true;$('table').replaceChildren(); }
+function clearResult(){ result=null;reportCopy=null;tables={};$('result').hidden=true;$('table').replaceChildren(); }
+function remember(data){
+  const {report_file: file,...metadata}=data;
+  let copy=snapshots.get(metadata.analysis_id)?.copy||null;
+  if(file?.content_base64){
+    try{
+      if(!Number.isSafeInteger(file.size_bytes)||file.size_bytes<0||file.size_bytes>8*1024*1024)throw new Error('size');
+      const binary=atob(file.content_base64);if(binary.length!==file.size_bytes)throw new Error('length');
+      const bytes=Uint8Array.from(binary,char=>char.charCodeAt(0));
+      copy=new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    }catch(_){copy=null;}
+  }
+  snapshots.delete(metadata.analysis_id);snapshots.set(metadata.analysis_id,{data:metadata,copy});
+  while(snapshots.size>3)snapshots.delete(snapshots.keys().next().value);
+  return {data:metadata,copy};
+}
 async function request(url, options={}){
   const response=await fetch(url,{...options,credentials:'omit'});
   if(!response.ok){
@@ -63,7 +80,9 @@ function drawTable(){
   table.append(body);area.append(table);
 }
 function show(data){
+  const remembered=remember(data);data=remembered.data;reportCopy=remembered.copy;
   result=data;$('result').hidden=false;$('analysis-id').value=data.analysis_id||'';
+  $('report-copy-note').textContent=reportCopy?'报告副本已保留在当前页面，服务器文件失效时仍可下载。刷新或关闭页面前请保存。':data.report_inline_reason==='size_limit'?'报告超过页面副本大小限制，请尽快下载保存。':'当前仅有服务器报告链接，请尽快下载保存。';
   $('result-mode').textContent=data.profile==='batch_ai'?'基础统计 + AI 分析':'基础统计';
   $('result-id').textContent='分析编号：'+(data.analysis_id||'未返回');
   const metrics=[['课程期次数',data.course_session_count??1],['学员人次',data.student_count],['有效评分',data.valid_rating_count],['文字题回答',data.feedback_response_count]];
@@ -83,17 +102,17 @@ $('analysis-form').addEventListener('submit',async event=>{
     const auth=headers();const useExample=$('example').checked;const ai=$('ai').checked;
     const files=Array.from($('files').files);const mapping=$('mapping').files[0];
     if(!useExample && (files.length<1||files.length>10))throw new Error('请上传 1–10 份问卷，或选择合成示例。');
-    if(files.some(file=>!file.name.toLowerCase().endsWith('.xlsx')) || (mapping&&!mapping.name.toLowerCase().endsWith('.xlsx')))throw new Error('仅支持 .xlsx 文件。');
+    if((!useExample&&files.some(file=>!file.name.toLowerCase().endsWith('.xlsx'))) || (mapping&&!mapping.name.toLowerCase().endsWith('.xlsx')))throw new Error('仅支持 .xlsx 文件。');
     if(!useExample && files.reduce((sum,file)=>sum+file.size, mapping?.size||0)>10*1024*1024)throw new Error('问卷与映射文件合计不能超过 10 MB。');
     busy(true);clearResult();status(ai?'正在读取问卷、分析反馈并生成报告，请保持页面打开…':'正在统计问卷并生成报告…');
     const form=new FormData();
     if(useExample){const sample=await request('/app/example');form.append('files',await sample.blob(),'合成示例课程_第01期.xlsx');}else{files.forEach(file=>form.append('files',file));}
-    if(mapping)form.append('mapping',mapping);form.append('enable_ai',String(ai));
+    if(mapping)form.append('mapping',mapping);form.append('enable_ai',String(ai));form.append('include_report','true');
     show(await (await request('/analysis/batch',{method:'POST',headers:auth,body:form})).json());
   }catch(error){status(error.message||'请求失败，请检查网络后重试。','error');}finally{busy(false);}
 });
-$('lookup').addEventListener('click',async()=>{try{const auth=headers();const id=$('analysis-id').value.trim();if(!/^[0-9a-f]{32}$/.test(id))throw new Error('请填写完整的分析编号。');busy(true);clearResult();status('正在读取已有结果…');show(await (await request('/analyses/'+id,{headers:auth})).json());}catch(error){status(error.message,'error');}finally{busy(false);}});
-$('download').addEventListener('click',async()=>{try{const auth=headers();if(!result?.download_url?.startsWith('/download/'))throw new Error('没有可用的报告链接。');busy(true);const response=await request(result.download_url,{headers:auth});const url=URL.createObjectURL(await response.blob());const link=document.createElement('a');link.href=url;link.download='course-analysis-'+result.analysis_id+'.xlsx';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);status('报告已下载。','success');}catch(error){status(error.message,'error');}finally{busy(false);}});
+$('lookup').addEventListener('click',async()=>{try{const id=$('analysis-id').value.trim();if(!/^[0-9a-f]{32}$/.test(id))throw new Error('请填写完整的分析编号。');if(snapshots.has(id)){show(snapshots.get(id).data);status('已读取本页保留的结果，不需要重新分析。','success');return;}const auth=headers();busy(true);clearResult();status('正在读取已有结果…');show(await (await request('/analyses/'+id,{headers:auth})).json());}catch(error){status(error.message,'error');}finally{busy(false);}});
+$('download').addEventListener('click',async()=>{try{if(!result)throw new Error('没有可用的报告。');busy(true);const local=Boolean(reportCopy);let blob=reportCopy;if(!blob){const auth=headers();if(!result.download_url?.startsWith('/download/'))throw new Error('没有可用的报告链接。');blob=await(await request(result.download_url,{headers:auth})).blob();}const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download='course-analysis-'+result.analysis_id+'.xlsx';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);status(local?'报告已下载（使用本页副本）。':'报告已下载。','success');}catch(error){status(error.message,'error');}finally{busy(false);}});
 $('table-select').addEventListener('change',drawTable);
 </script>
 </body>

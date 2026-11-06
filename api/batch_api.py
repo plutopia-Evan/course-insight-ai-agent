@@ -2,10 +2,12 @@
 
 import json
 import tempfile
+import base64
+import hashlib
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Response
 from starlette.concurrency import run_in_threadpool
 
 from api.upload_storage import saved_upload
@@ -16,13 +18,14 @@ from core.report_storage import new_report_path
 
 
 router = APIRouter(tags=["batch"])
+MAX_INLINE_REPORT_BYTES = 8 * 1024 * 1024
 
 
 def records(frame):
     return json.loads(frame.to_json(orient="records", force_ascii=False))
 
 
-def analyze_batch_files(files, mapping, enable_ai):
+def analyze_batch_files(files, mapping, enable_ai, include_report=False):
     with tempfile.TemporaryDirectory(prefix="course-batch-") as directory:
         result = run_batch_analysis(files, mapping, directory, enable_ai=enable_ai)
         path = new_report_path("批量课程", "多期")
@@ -48,15 +51,33 @@ def analyze_batch_files(files, mapping, enable_ai):
             "data_quality_issues": records(result["pending_review"]),
             "ai_tables": {name: records(frame) for name, frame in (ai or {}).items()},
         }
-        return save_analysis_result(context)
+        payload = save_analysis_result(context)
+        # Send a bounded report copy to the authorized client, not into the manifest.
+        if include_report:
+            content = result["complete_xlsx_bytes"]
+            if len(content) <= MAX_INLINE_REPORT_BYTES:
+                payload["report_file"] = {
+                    "filename": path.name,
+                    "content_base64": base64.b64encode(content).decode("ascii"),
+                    "size_bytes": len(content),
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                }
+                payload["report_delivery"] = "inline_and_link"
+            else:
+                payload["report_delivery"] = "link_only"
+                payload["report_inline_reason"] = "size_limit"
+        return payload
 
 
 @router.post("/analysis/batch")
 async def batch_analysis(
     files: Annotated[list[UploadFile], File()],
+    response: Response,
     mapping: Annotated[UploadFile | None, File()] = None,
     enable_ai: Annotated[bool, Form()] = False,
+    include_report: Annotated[bool, Form()] = False,
 ):
+    response.headers["Cache-Control"] = "no-store"
     if not 1 <= len(files) <= 10:
         raise HTTPException(status_code=422, detail="每次请上传 1—10 份问卷")
     total = 0
@@ -73,6 +94,6 @@ async def batch_analysis(
         async with saved_upload(mapping) as path:
             mapping_data = (mapping.filename, path.read_bytes())
     try:
-        return await run_in_threadpool(analyze_batch_files, payloads, mapping_data, enable_ai)
+        return await run_in_threadpool(analyze_batch_files, payloads, mapping_data, enable_ai, include_report)
     except SurveyInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

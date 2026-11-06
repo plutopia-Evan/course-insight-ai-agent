@@ -201,6 +201,13 @@ def build_session_input(row, pos_df, neg_df, sug_df) -> dict:
     sess = row["session"]
 
     def _items(sub_df):
+        # Older workbooks used a lone "暂无数据" cell for an empty category.
+        if sub_df.empty:
+            return []
+        required = {"course_name", "session", "category", "subcategory", "反馈人数", "人数占比"}
+        missing = required - set(sub_df.columns)
+        if missing:
+            raise ValueError(f"反馈统计表缺少必要列: {sorted(missing)}")
         subset = sub_df[(sub_df["course_name"] == course) & (sub_df["session"] == sess)]
         items = []
         for _, r in subset.iterrows():
