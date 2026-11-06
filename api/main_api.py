@@ -5,11 +5,14 @@ from api.analysis_api import router as analysis_router
 from api.feedback_api import router as feedback_router
 from api.report_api import router as report_router
 from api.batch_api import router as batch_router
+from api.web_ui import router as web_router
 
 
 app = FastAPI(
     title="Course Insight AI Agent API"
 )
+
+app.include_router(web_router)
 
 from api.dify_api import router as dify_router
 
