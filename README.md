@@ -8,11 +8,18 @@
 
 | 使用场景 | 入口 | 当前能力 |
 |---|---|---|
+| 在线直接使用 | 服务地址 `/app` | 填写访问令牌 → 上传问卷或用合成示例 → 生成复盘 → 复用结果和下载报告；无需单独部署 Streamlit |
 | 运营直接操作，分析多个课程和期次 | `streamlit run app.py` | 上传问卷或选合成示例 → 使用内置/自定义映射 → 选择是否同时做 AI → 生成复盘 → 下载报告 |
 | 系统调用完整的批量流程 | `POST /analysis/batch` | 与网页共用基础统计、AI 分类、反馈统计、单期总结、跨期趋势及报告合并；AI 默认关闭 |
 | Dify 或其他系统调用 | `POST /analysis`，Dify 可使用 `/dify/analyze` | 一份问卷 → 评分统计、有效反馈分类、Excel 报告 → 返回分析编号供复用 |
 
-网页端与 `/analysis/batch` 共用 `core/batch_service.py`；原有单文件 `/analysis` 和 `/dify/analyze` 保留兼容范围，不包含完整课程总结。Render 和 Docker 配置启动 API，不会自动启动网页端。核心实现为固定分析工作流；Dify 文档描述工具接入契约，不代表已完成外部平台部署。
+线上 `/app` 页面调用同域 `/analysis/batch`；本地 Streamlit 与该接口共用 `core/batch_service.py`。原有单文件 `/analysis` 和 `/dify/analyze` 保留兼容范围，不包含完整课程总结。Render 和 Docker 配置启动的 FastAPI 同时提供 `/app` 上传页面，Streamlit 是可选的本地界面。核心实现为固定分析工作流；Dify 文档描述工具接入契约，不代表已完成外部平台部署。
+
+### 在线访问
+
+现有 Render 服务的上传页面：`https://course-insight-ai-agent.onrender.com/app`。服务部署此版本后即可访问。
+
+页面使用部署者配置的 `SERVICE_API_KEY` 作为访问令牌，不是 DeepSeek 模型密钥。令牌仅作为同域请求的 Authorization 头发送，不写入 URL 或 localStorage。公开页面和合成示例不包含密钥；分析、查询和报告下载仍需鉴权。页面默认只做基础统计，勾选 AI 后才会触发模型分析。
 
 ### 批量接口
 
